@@ -443,6 +443,24 @@ contextBridge.exposeInMainWorld("electron", {
       );
   },
 
+  /* WebDAV backup */
+  uploadSaveGameToWebDav: (
+    objectId: string,
+    shop: GameShop,
+    downloadOptionTitle: string | null
+  ) =>
+    ipcRenderer.invoke(
+      "uploadSaveGameToWebDav",
+      objectId,
+      shop,
+      downloadOptionTitle
+    ),
+  testWebDavConnection: (
+    host: string,
+    username: string,
+    password: string
+  ) => ipcRenderer.invoke("testWebDavConnection", host, username, password),
+
   /* Misc */
   ping: () => ipcRenderer.invoke("ping"),
   getVersion: () => ipcRenderer.invoke("getVersion"),

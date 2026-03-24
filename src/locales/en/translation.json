@@ -788,7 +788,20 @@
     "cannot_change_downloader_while_downloading": "Cannot change this setting while a download is in progress",
     "create_shortcuts_on_download": "Create desktop and Start Menu shortcuts when a game finishes downloading",
     "default_proton_version": "Default Proton version",
-    "default_proton_version_description": "Select the Proton version used by Auto mode when a game has no custom override"
+    "default_proton_version_description": "Select the Proton version used by Auto mode when a game has no custom override",
+    "webdav": "WebDAV",
+    "webdav_description": "Use a WebDAV server to back up your game saves automatically, as an alternative to Hydra Cloud.",
+    "webdav_host": "Server URL",
+    "webdav_username": "Username",
+    "webdav_password": "Password",
+    "webdav_location": "Backup path",
+    "webdav_location_hint": "The remote path on your WebDAV server where backups will be stored. Defaults to /hydra-backups.",
+    "webdav_test_connection": "Test connection",
+    "webdav_testing": "Testing…",
+    "webdav_connection_success": "WebDAV connection successful",
+    "webdav_connection_failed": "Failed to connect to WebDAV server",
+    "webdav_missing_credentials": "Please fill in the server URL, username and password",
+    "webdav_save_failed": "Failed to save WebDAV settings"
   },
   "notifications": {
     "download_complete": "Download complete",

@@ -350,6 +350,18 @@ declare global {
       cb: (progress: AxiosProgressEvent) => void
     ) => () => Electron.IpcRenderer;
 
+    /* WebDAV backup */
+    uploadSaveGameToWebDav: (
+      objectId: string,
+      shop: GameShop,
+      downloadOptionTitle: string | null
+    ) => Promise<void>;
+    testWebDavConnection: (
+      host: string,
+      username: string,
+      password: string
+    ) => Promise<void>;
+
     /* Misc */
     openExternal: (src: string) => Promise<void>;
     openCheckout: () => Promise<void>;

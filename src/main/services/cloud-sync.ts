@@ -69,7 +69,7 @@ export class CloudSync {
     });
   }
 
-  private static async bundleBackup(
+  public static async bundleBackup(
     shop: GameShop,
     objectId: string,
     winePrefix: string | null

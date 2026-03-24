@@ -145,6 +145,10 @@ export interface UserPreferences {
   defaultProtonPath?: string | null;
   autoRunMangohud?: boolean;
   autoRunGamemode?: boolean;
+  webDavHost?: string | null;
+  webDavUsername?: string | null;
+  webDavPassword?: string | null;
+  webDavLocation?: string | null;
 }
 
 export interface ScreenState {

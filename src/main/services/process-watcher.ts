@@ -6,6 +6,7 @@ import axios from "axios";
 import { ProcessPayload } from "./download/types";
 import { db, gamesSublevel, levelKeys } from "@main/level";
 import { CloudSync } from "./cloud-sync";
+import { WebDavBackup } from "./webdav-backup";
 import { logger } from "./logger";
 import { PowerSaveBlockerManager } from "./power-save-blocker";
 import path from "path";
@@ -267,6 +268,27 @@ export const watchProcesses = async () => {
   }
 };
 
+function triggerWebDavAutoBackup(game: Game, context: string) {
+  if (game.shop === "custom" || !game.automaticCloudSync) return;
+
+  db.get<string, UserPreferences>(levelKeys.userPreferences, {
+    valueEncoding: "json",
+  })
+    .then((prefs) => {
+      if (WebDavBackup.isConfigured(prefs)) {
+        WebDavBackup.uploadSaveGame(
+          game.objectId,
+          game.shop,
+          null,
+          CloudSync.getBackupLabel(true)
+        ).catch((err) => {
+          logger.error(`WebDAV auto-backup failed (${context})`, err);
+        });
+      }
+    })
+    .catch(() => {});
+}
+
 function onOpenGame(game: Game) {
   const now = performance.now();
 
@@ -324,6 +346,8 @@ function onOpenGame(game: Game) {
   } else {
     createGame({ ...game, lastTimePlayed: new Date() }).catch(() => {});
   }
+
+  triggerWebDavAutoBackup(game, "game open");
 }
 
 function onTickGame(game: Game) {
@@ -398,6 +422,8 @@ const onCloseGame = (game: Game) => {
   gamesSublevel.put(gameKey, updatedGame);
 
   if (game.shop === "custom") return;
+
+  triggerWebDavAutoBackup(game, "game close");
 
   if (game.remoteId) {
     if (game.automaticCloudSync) {
