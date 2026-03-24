@@ -77,7 +77,16 @@ export function CloudSyncPanel({
   const { showSuccessToast, showErrorToast } = useToast();
 
   const userDetails = useAppSelector((state) => state.userDetails.userDetails);
+  const userPreferences = useAppSelector(
+    (state) => state.userPreferences.value
+  );
   const backupsPerGameLimit = userDetails?.quirks?.backupsPerGameLimit ?? 0;
+
+  const isWebDavConfigured = Boolean(
+    userPreferences?.webDavHost &&
+      userPreferences?.webDavUsername &&
+      userPreferences?.webDavPassword
+  );
 
   const handleDeleteArtifactClick = async (gameArtifactId: string) => {
     setDeletingArtifact(true);
@@ -107,11 +116,18 @@ export function CloudSyncPanel({
   }, [objectId, shop]);
 
   useEffect(() => {
-    if (!hasActiveSubscription) return;
+    if (!hasActiveSubscription && !isWebDavConfigured) return;
 
     getGameBackupPreview();
-    getGameArtifacts();
-  }, [getGameArtifacts, getGameBackupPreview, hasActiveSubscription]);
+    if (hasActiveSubscription) {
+      getGameArtifacts();
+    }
+  }, [
+    getGameArtifacts,
+    getGameBackupPreview,
+    hasActiveSubscription,
+    isWebDavConfigured,
+  ]);
 
   const handleBackupInstallClick = async (artifactId: string) => {
     setBackupDownloadProgress(null);
@@ -189,7 +205,7 @@ export function CloudSyncPanel({
   const disableActions =
     uploadingBackup || restoringBackup || deletingArtifact || freezingArtifact;
 
-  if (!hasActiveSubscription) {
+  if (!hasActiveSubscription && !isWebDavConfigured) {
     return (
       <div className="cloud-sync-panel__upgrade">
         <p>{tHydraCloud("hydra_cloud_feature_found")}</p>

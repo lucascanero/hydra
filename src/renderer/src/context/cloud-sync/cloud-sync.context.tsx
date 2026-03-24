@@ -9,6 +9,7 @@ import React, {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useAppSelector } from "@renderer/hooks";
 
 export enum CloudSyncState {
   New,
@@ -84,6 +85,8 @@ export function CloudSyncContextProvider({
 
   const { showSuccessToast, showErrorToast } = useToast();
 
+  const userPreferences = useAppSelector((state) => state.userPreferences.value);
+
   const downloadGameArtifact = useCallback(
     async (gameArtifactId: string) => {
       setRestoringBackup(true);
@@ -133,15 +136,27 @@ export function CloudSyncContextProvider({
   const uploadSaveGame = useCallback(
     async (downloadOptionTitle: string | null) => {
       setUploadingBackup(true);
-      window.electron
-        .uploadSaveGame(objectId, shop, downloadOptionTitle)
-        .catch((err) => {
-          setUploadingBackup(false);
-          logger.error("Failed to upload save game", { objectId, shop, err });
-          showErrorToast(t("backup_failed"));
-        });
+
+      const isWebDavConfigured =
+        userPreferences?.webDavHost &&
+        userPreferences?.webDavUsername &&
+        userPreferences?.webDavPassword;
+
+      const uploadPromise = isWebDavConfigured
+        ? window.electron.uploadSaveGameToWebDav(
+            objectId,
+            shop,
+            downloadOptionTitle
+          )
+        : window.electron.uploadSaveGame(objectId, shop, downloadOptionTitle);
+
+      uploadPromise.catch((err) => {
+        setUploadingBackup(false);
+        logger.error("Failed to upload save game", { objectId, shop, err });
+        showErrorToast(t("backup_failed"));
+      });
     },
-    [objectId, shop, t, showErrorToast]
+    [objectId, shop, t, showErrorToast, userPreferences]
   );
 
   const toggleArtifactFreeze = useCallback(
