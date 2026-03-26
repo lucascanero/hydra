@@ -98,6 +98,24 @@
     text-overflow: ellipsis;
   }
 
+  &__artifact-source-badges {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+  }
+
+  &__source-badge {
+    font-size: 11px;
+    line-height: 1;
+    border-radius: 999px;
+    padding: 3px 8px;
+    color: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.08);
+    white-space: nowrap;
+  }
+
   &__artifacts {
     display: flex;
     gap: globals.$spacing-unit;

@@ -1,5 +1,5 @@
 import { Button, CheckboxField } from "@renderer/components";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
 import { cloudSyncContext, gameDetailsContext } from "@renderer/context";
 import "./cloud-sync-panel.scss";
@@ -27,7 +27,7 @@ import { useTranslation } from "react-i18next";
 import { AxiosProgressEvent } from "axios";
 import { formatDownloadProgress } from "@renderer/helpers";
 import { CloudSyncRenameArtifactModal } from "../cloud-sync-rename-artifact-modal/cloud-sync-rename-artifact-modal";
-import { GameArtifact } from "@types";
+import { GameArtifact, WebDavBackupEntry } from "@types";
 import { orderBy } from "lodash-es";
 import { MoreVertical } from "lucide-react";
 import { DropdownMenu } from "@renderer/components/dropdown-menu/dropdown-menu";
@@ -35,12 +35,16 @@ import { Tooltip } from "react-tooltip";
 
 interface CloudSyncPanelProps {
   automaticCloudSync: boolean;
+  automaticWebDavSync: boolean;
   onToggleAutomaticCloudSync: (event: ChangeEvent<HTMLInputElement>) => void;
+  onToggleAutomaticWebDavSync: (event: ChangeEvent<HTMLInputElement>) => void;
 }
 
 export function CloudSyncPanel({
   automaticCloudSync,
+  automaticWebDavSync,
   onToggleAutomaticCloudSync,
+  onToggleAutomaticWebDavSync,
 }: Readonly<CloudSyncPanelProps>) {
   const [deletingArtifact, setDeletingArtifact] = useState(false);
   const [backupDownloadProgress, setBackupDownloadProgress] =
@@ -48,6 +52,11 @@ export function CloudSyncPanel({
   const [artifactToRename, setArtifactToRename] = useState<GameArtifact | null>(
     null
   );
+  const [webDavBackups, setWebDavBackups] = useState<WebDavBackupEntry[]>([]);
+  const [loadingWebDavBackups, setLoadingWebDavBackups] = useState(false);
+  const [restoringWebDavBackup, setRestoringWebDavBackup] = useState(false);
+  const [webDavBackupDownloadProgress, setWebDavBackupDownloadProgress] =
+    useState<AxiosProgressEvent | null>(null);
 
   const { t } = useTranslation("game_details");
   const { t: tHydraCloud } = useTranslation("hydra_cloud");
@@ -100,6 +109,36 @@ export function CloudSyncPanel({
     }
   };
 
+  const loadWebDavBackups = useCallback(async () => {
+    if (!isWebDavConfigured || !objectId) {
+      setWebDavBackups([]);
+      return;
+    }
+
+    setLoadingWebDavBackups(true);
+    try {
+      const backups = await window.electron.listWebDavBackups(objectId, shop);
+      setWebDavBackups(backups);
+    } catch {
+      setWebDavBackups([]);
+    } finally {
+      setLoadingWebDavBackups(false);
+    }
+  }, [isWebDavConfigured, objectId, shop]);
+
+  const handleRestoreWebDavBackup = async (href: string) => {
+    if (!objectId) return;
+
+    setWebDavBackupDownloadProgress(null);
+    setRestoringWebDavBackup(true);
+    try {
+      await window.electron.downloadWebDavBackup(objectId, shop, href);
+    } catch {
+      setRestoringWebDavBackup(false);
+      showErrorToast(t("webdav_restore_failed"));
+    }
+  };
+
   useEffect(() => {
     const removeBackupDownloadProgressListener =
       window.electron.onBackupDownloadProgress(
@@ -116,18 +155,60 @@ export function CloudSyncPanel({
   }, [objectId, shop]);
 
   useEffect(() => {
+    const removeProgressListener =
+      window.electron.onWebDavBackupDownloadProgress(
+        objectId!,
+        shop,
+        (progressEvent) => {
+          setWebDavBackupDownloadProgress(progressEvent);
+        }
+      );
+
+    const removeCompleteListener =
+      window.electron.onWebDavBackupDownloadComplete(
+        objectId!,
+        shop,
+        (success) => {
+          setRestoringWebDavBackup(false);
+          if (success) {
+            showSuccessToast(t("webdav_restore_success"));
+          } else {
+            showErrorToast(t("webdav_restore_failed"));
+          }
+        }
+      );
+
+    return () => {
+      removeProgressListener();
+      removeCompleteListener();
+    };
+  }, [objectId, shop, showSuccessToast, showErrorToast, t]);
+
+  useEffect(() => {
     if (!hasActiveSubscription && !isWebDavConfigured) return;
 
     getGameBackupPreview();
     if (hasActiveSubscription) {
       getGameArtifacts();
     }
+    if (isWebDavConfigured) {
+      loadWebDavBackups();
+    }
   }, [
     getGameArtifacts,
     getGameBackupPreview,
     hasActiveSubscription,
     isWebDavConfigured,
+    objectId,
+    shop,
+    loadWebDavBackups,
   ]);
+
+  useEffect(() => {
+    if (!uploadingBackup && isWebDavConfigured) {
+      loadWebDavBackups();
+    }
+  }, [isWebDavConfigured, loadWebDavBackups, uploadingBackup]);
 
   const handleBackupInstallClick = async (artifactId: string) => {
     setBackupDownloadProgress(null);
@@ -152,6 +233,68 @@ export function CloudSyncPanel({
   const hasReachedLimit =
     backupsPerGameLimit > 0 && artifacts.length >= backupsPerGameLimit;
 
+  const hydraByLabel = useMemo(() => {
+    const map = new Map<string, GameArtifact>();
+    for (const artifact of artifacts) {
+      if (artifact.label) {
+        map.set(artifact.label, artifact);
+      }
+    }
+    return map;
+  }, [artifacts]);
+
+  const mergedBackupRows = useMemo(() => {
+    const rows: Array<{
+      key: string;
+      hydraArtifact?: GameArtifact;
+      webDavBackup?: WebDavBackupEntry;
+      createdAt: string;
+    }> = [];
+
+    const consumedHydraIds = new Set<string>();
+    const consumedWebDavHrefs = new Set<string>();
+
+    for (const webDavBackup of webDavBackups) {
+      const nameWithoutExt = webDavBackup.filename.replace(/\.tar$/i, "");
+      const matchingHydra = hydraByLabel.get(nameWithoutExt);
+
+      if (matchingHydra) {
+        consumedHydraIds.add(matchingHydra.id);
+        consumedWebDavHrefs.add(webDavBackup.href);
+        rows.push({
+          key: `both-${matchingHydra.id}-${webDavBackup.href}`,
+          hydraArtifact: matchingHydra,
+          webDavBackup,
+          createdAt: matchingHydra.createdAt,
+        });
+      }
+    }
+
+    for (const artifact of artifacts) {
+      if (consumedHydraIds.has(artifact.id)) continue;
+      rows.push({
+        key: `hydra-${artifact.id}`,
+        hydraArtifact: artifact,
+        createdAt: artifact.createdAt,
+      });
+    }
+
+    for (const webDavBackup of webDavBackups) {
+      if (consumedWebDavHrefs.has(webDavBackup.href)) continue;
+      rows.push({
+        key: `webdav-${webDavBackup.href}`,
+        webDavBackup,
+        createdAt: webDavBackup.createdAt,
+      });
+    }
+
+    return orderBy(
+      rows,
+      [(row) => new Date(row.createdAt).getTime()],
+      ["desc"]
+    );
+  }, [artifacts, hydraByLabel, webDavBackups]);
+
   const backupStateLabel = useMemo(() => {
     if (uploadingBackup) {
       return (
@@ -173,6 +316,18 @@ export function CloudSyncPanel({
         </span>
       );
     }
+    if (restoringWebDavBackup) {
+      return (
+        <span className="cloud-sync-panel__backup-state-label">
+          <SyncIcon className="cloud-sync-panel__sync-icon" />
+          {t("webdav_restoring", {
+            progress: formatDownloadProgress(
+              webDavBackupDownloadProgress?.progress ?? 0
+            ),
+          })}
+        </span>
+      );
+    }
     if (loadingPreview) {
       return (
         <span className="cloud-sync-panel__backup-state-label">
@@ -181,29 +336,44 @@ export function CloudSyncPanel({
         </span>
       );
     }
+    if (loadingWebDavBackups) {
+      return (
+        <span className="cloud-sync-panel__backup-state-label">
+          <SyncIcon className="cloud-sync-panel__sync-icon" />
+          {t("webdav_loading_backups")}
+        </span>
+      );
+    }
     if (hasReachedLimit) {
       return t("max_number_of_artifacts_reached");
     }
-    if (!backupPreview) {
-      return t("no_backup_preview");
-    }
-    if (artifacts.length === 0) {
+    if (mergedBackupRows.length === 0) {
+      if (!backupPreview) {
+        return t("no_backup_preview");
+      }
       return t("no_backups");
     }
     return "";
   }, [
-    artifacts.length,
     backupDownloadProgress?.progress,
     backupPreview,
     hasReachedLimit,
+    loadingWebDavBackups,
     loadingPreview,
+    mergedBackupRows.length,
     restoringBackup,
+    restoringWebDavBackup,
     t,
     uploadingBackup,
+    webDavBackupDownloadProgress?.progress,
   ]);
 
   const disableActions =
-    uploadingBackup || restoringBackup || deletingArtifact || freezingArtifact;
+    uploadingBackup ||
+    restoringBackup ||
+    deletingArtifact ||
+    freezingArtifact ||
+    restoringWebDavBackup;
 
   if (!hasActiveSubscription && !isWebDavConfigured) {
     return (
@@ -245,6 +415,22 @@ export function CloudSyncPanel({
         />
       </div>
 
+      <div className="cloud-sync-panel__automatic-sync">
+        <CheckboxField
+          label={
+            <div className="cloud-sync-panel__automatic-sync-label">
+              {t("enable_automatic_webdav_sync")}
+              <span className="cloud-sync-panel__automatic-sync-badge">
+                WebDAV
+              </span>
+            </div>
+          }
+          checked={automaticWebDavSync}
+          disabled={!isWebDavConfigured || !game?.executablePath}
+          onChange={onToggleAutomaticWebDavSync}
+        />
+      </div>
+
       <div className="cloud-sync-panel__header">
         <div className="cloud-sync-panel__title-container">
           <p>{backupStateLabel}</p>
@@ -279,104 +465,156 @@ export function CloudSyncPanel({
       <div className="cloud-sync-panel__backups-header">
         <h3>{t("backups")}</h3>
         <span className="cloud-sync-panel__backups-count">
-          {formatNumber(artifacts.length)}
+          {formatNumber(mergedBackupRows.length)}
         </span>
       </div>
 
-      {artifacts.length > 0 ? (
+      {mergedBackupRows.length > 0 ? (
         <ul className="cloud-sync-panel__artifacts">
-          {orderBy(artifacts, [(a) => !a.isFrozen], ["asc"]).map((artifact) => {
-            const artifactName =
-              artifact.label ??
-              t("backup_from", {
-                date: formatDate(artifact.createdAt),
-              });
+          {mergedBackupRows.map((row) => {
+            const artifact = row.hydraArtifact;
+            const webDavBackup = row.webDavBackup;
+            const isHydra = Boolean(artifact);
+            const isWebDav = Boolean(webDavBackup);
+            const artifactName = artifact
+              ? (artifact.label ??
+                t("backup_from", {
+                  date: formatDate(artifact.createdAt),
+                }))
+              : (webDavBackup?.filename ?? "").replace(/\.tar$/i, "");
+            const hostname = artifact?.hostname
+              ? artifact.hostname
+              : (webDavBackup?.filename.split("_")[0] ?? "");
+            const sizeInBytes =
+              artifact?.artifactLengthInBytes ?? webDavBackup?.sizeInBytes ?? 0;
+            const createdAt =
+              artifact?.createdAt ?? webDavBackup?.createdAt ?? "";
+            const isFrozen = artifact?.isFrozen ?? false;
 
             return (
-              <li key={artifact.id} className="cloud-sync-panel__artifact">
+              <li key={row.key} className="cloud-sync-panel__artifact">
                 <div className="cloud-sync-panel__artifact-info">
                   <div className="cloud-sync-panel__artifact-header">
-                    <button
-                      type="button"
-                      className="cloud-sync-panel__artifact-label"
-                      onClick={() => setArtifactToRename(artifact)}
-                      data-tooltip-id="cloud-sync-artifact-name-tooltip"
-                      data-tooltip-content={artifactName}
-                    >
+                    {artifact ? (
+                      <button
+                        type="button"
+                        className="cloud-sync-panel__artifact-label"
+                        onClick={() => setArtifactToRename(artifact)}
+                        data-tooltip-id="cloud-sync-artifact-name-tooltip"
+                        data-tooltip-content={artifactName}
+                      >
+                        <span className="cloud-sync-panel__artifact-label-text">
+                          {artifactName}
+                        </span>
+                        <PencilIcon />
+                      </button>
+                    ) : (
                       <span className="cloud-sync-panel__artifact-label-text">
                         {artifactName}
                       </span>
-                      <PencilIcon />
-                    </button>
-                    <small>{formatBytes(artifact.artifactLengthInBytes)}</small>
+                    )}
+                    <small>{formatBytes(sizeInBytes)}</small>
+                    <div className="cloud-sync-panel__artifact-source-badges">
+                      {isHydra && (
+                        <span className="cloud-sync-panel__source-badge">
+                          Hydra Cloud
+                        </span>
+                      )}
+                      {isWebDav && (
+                        <span className="cloud-sync-panel__source-badge">
+                          WebDAV
+                        </span>
+                      )}
+                    </div>
                   </div>
 
-                  <span className="cloud-sync-panel__artifact-meta">
-                    <DeviceDesktopIcon size={14} />
-                    {artifact.hostname}
-                  </span>
+                  {hostname && (
+                    <span className="cloud-sync-panel__artifact-meta">
+                      <DeviceDesktopIcon size={14} />
+                      {hostname}
+                    </span>
+                  )}
 
-                  <span className="cloud-sync-panel__artifact-meta">
-                    <InfoIcon size={14} />
-                    {artifact.downloadOptionTitle ??
-                      t("no_download_option_info")}
-                  </span>
+                  {artifact && (
+                    <span className="cloud-sync-panel__artifact-meta">
+                      <InfoIcon size={14} />
+                      {artifact.downloadOptionTitle ??
+                        t("no_download_option_info")}
+                    </span>
+                  )}
 
-                  <span className="cloud-sync-panel__artifact-meta">
-                    <ClockIcon size={14} />
-                    {formatDateTime(artifact.createdAt)}
-                  </span>
+                  {createdAt && (
+                    <span className="cloud-sync-panel__artifact-meta">
+                      <ClockIcon size={14} />
+                      {formatDateTime(createdAt)}
+                    </span>
+                  )}
                 </div>
 
                 <div className="cloud-sync-panel__artifact-actions">
-                  <Button
-                    type="button"
-                    onClick={() => handleBackupInstallClick(artifact.id)}
-                    disabled={disableActions}
-                    theme="outline"
-                  >
-                    {restoringBackup ? (
-                      <SyncIcon className="cloud-sync-panel__sync-icon" />
-                    ) : (
-                      <HistoryIcon />
-                    )}
-                    {t("install_backup")}
-                  </Button>
-                  <DropdownMenu
-                    align="end"
-                    items={[
-                      {
-                        label: artifact.isFrozen
-                          ? t("unfreeze_backup")
-                          : t("freeze_backup"),
-                        icon: artifact.isFrozen ? (
-                          <PinSlashIcon />
+                  {artifact && (
+                    <>
+                      <Button
+                        type="button"
+                        onClick={() => handleBackupInstallClick(artifact.id)}
+                        disabled={disableActions}
+                        theme="outline"
+                      >
+                        {restoringBackup ? (
+                          <SyncIcon className="cloud-sync-panel__sync-icon" />
                         ) : (
-                          <PinIcon />
-                        ),
-                        onClick: () =>
-                          handleFreezeArtifactClick(
-                            artifact.id,
-                            !artifact.isFrozen
-                          ),
-                        disabled: disableActions,
-                      },
-                      {
-                        label: t("delete_backup"),
-                        icon: <TrashIcon />,
-                        onClick: () => handleDeleteArtifactClick(artifact.id),
-                        disabled: disableActions || artifact.isFrozen,
-                      },
-                    ]}
-                  >
+                          <HistoryIcon />
+                        )}
+                        {t("install_backup")}
+                      </Button>
+                      <DropdownMenu
+                        align="end"
+                        items={[
+                          {
+                            label: isFrozen
+                              ? t("unfreeze_backup")
+                              : t("freeze_backup"),
+                            icon: isFrozen ? <PinSlashIcon /> : <PinIcon />,
+                            onClick: () =>
+                              handleFreezeArtifactClick(artifact.id, !isFrozen),
+                            disabled: disableActions,
+                          },
+                          {
+                            label: t("delete_backup"),
+                            icon: <TrashIcon />,
+                            onClick: () =>
+                              handleDeleteArtifactClick(artifact.id),
+                            disabled: disableActions || isFrozen,
+                          },
+                        ]}
+                      >
+                        <Button
+                          type="button"
+                          theme="outline"
+                          tooltip={t("options")}
+                        >
+                          <MoreVertical size={16} />
+                        </Button>
+                      </DropdownMenu>
+                    </>
+                  )}
+                  {!artifact && webDavBackup && (
                     <Button
                       type="button"
+                      onClick={() =>
+                        handleRestoreWebDavBackup(webDavBackup.href)
+                      }
+                      disabled={disableActions}
                       theme="outline"
-                      tooltip={t("options")}
                     >
-                      <MoreVertical size={16} />
+                      {restoringWebDavBackup ? (
+                        <SyncIcon className="cloud-sync-panel__sync-icon" />
+                      ) : (
+                        <HistoryIcon />
+                      )}
+                      {t("webdav_restore_backup")}
                     </Button>
-                  </DropdownMenu>
+                  )}
                 </div>
               </li>
             );

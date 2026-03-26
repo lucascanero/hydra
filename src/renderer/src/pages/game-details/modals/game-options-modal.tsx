@@ -41,7 +41,6 @@ import { CompatibilitySettingsSection } from "./game-options-modal/compatibility
 import { DownloadsSettingsSection } from "./game-options-modal/downloads-section";
 import { DangerZoneSection } from "./game-options-modal/danger-zone-section";
 import { HydraCloudSettingsSection } from "./game-options-modal/hydra-cloud-section";
-import { WebDavSettingsSection } from "./game-options-modal/webdav-section";
 import type { GameSettingsCategoryId } from "./game-options-modal/types";
 import { CreateSteamShortcutModal } from "./create-steam-shortcut-modal";
 
@@ -585,11 +584,6 @@ export function GameOptionsModal({
         label: t("settings_category_hydra_cloud"),
         icon: <CloudIcon size={16} />,
       },
-      {
-        id: "webdav" as const,
-        label: t("settings_category_webdav"),
-        icon: <CloudIcon size={16} />,
-      },
       ...(shouldShowWinePrefixConfiguration
         ? [
             {
@@ -615,7 +609,11 @@ export function GameOptionsModal({
 
   useEffect(() => {
     if (visible) {
-      setSelectedCategory(initialCategory ?? "general");
+      setSelectedCategory(
+        initialCategory === "webdav"
+          ? "hydra_cloud"
+          : (initialCategory ?? "general")
+      );
     }
   }, [initialCategory, visible]);
 
@@ -771,14 +769,8 @@ export function GameOptionsModal({
               <HydraCloudSettingsSection
                 game={game}
                 automaticCloudSync={automaticCloudSync}
-                onToggleAutomaticCloudSync={handleToggleAutomaticCloudSync}
-              />
-            )}
-
-            {selectedCategory === "webdav" && (
-              <WebDavSettingsSection
-                game={game}
                 automaticWebDavSync={automaticWebDavSync}
+                onToggleAutomaticCloudSync={handleToggleAutomaticCloudSync}
                 onToggleAutomaticWebDavSync={handleToggleAutomaticWebDavSync}
               />
             )}
