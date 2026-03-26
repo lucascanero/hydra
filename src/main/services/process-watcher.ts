@@ -268,7 +268,7 @@ export const watchProcesses = async () => {
   }
 };
 
-function triggerWebDavAutoBackup(game: Game, context: string) {
+function triggerWebDavAutoBackup(game: Game, context: string, label: string) {
   if (game.shop === "custom" || !game.automaticWebDavSync) return;
 
   db.get<string, UserPreferences>(levelKeys.userPreferences, {
@@ -280,7 +280,7 @@ function triggerWebDavAutoBackup(game: Game, context: string) {
           game.objectId,
           game.shop,
           null,
-          CloudSync.getBackupLabel(true)
+          label
         ).catch((err) => {
           logger.error(`WebDAV auto-backup failed (${context})`, err);
         });
@@ -322,6 +322,8 @@ function onOpenGame(game: Game) {
   );
 
   if (game.remoteId) {
+    const automaticBackupLabel = CloudSync.getBackupLabel(true);
+
     trackGamePlaytime(
       game,
       game.unsyncedDeltaPlayTimeInMilliseconds ?? 0,
@@ -340,14 +342,15 @@ function onOpenGame(game: Game) {
         game.objectId,
         game.shop,
         null,
-        CloudSync.getBackupLabel(true)
+        automaticBackupLabel
       );
     }
+
+    triggerWebDavAutoBackup(game, "game open", automaticBackupLabel);
   } else {
     createGame({ ...game, lastTimePlayed: new Date() }).catch(() => {});
+    triggerWebDavAutoBackup(game, "game open", CloudSync.getBackupLabel(true));
   }
-
-  triggerWebDavAutoBackup(game, "game open");
 }
 
 function onTickGame(game: Game) {
@@ -423,7 +426,9 @@ const onCloseGame = (game: Game) => {
 
   if (game.shop === "custom") return;
 
-  triggerWebDavAutoBackup(game, "game close");
+  const automaticBackupLabel = CloudSync.getBackupLabel(true);
+
+  triggerWebDavAutoBackup(game, "game close", automaticBackupLabel);
 
   if (game.remoteId) {
     if (game.automaticCloudSync) {
@@ -431,7 +436,7 @@ const onCloseGame = (game: Game) => {
         game.objectId,
         game.shop,
         null,
-        CloudSync.getBackupLabel(true)
+        automaticBackupLabel
       );
     }
 
