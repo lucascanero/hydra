@@ -497,21 +497,23 @@ export function CloudSyncPanel({
         />
       </div>
 
-      <div className="cloud-sync-panel__automatic-sync">
-        <CheckboxField
-          label={
-            <div className="cloud-sync-panel__automatic-sync-label">
-              {t("enable_automatic_webdav_sync")}
-              <span className="cloud-sync-panel__automatic-sync-badge">
-                WebDAV
-              </span>
-            </div>
-          }
-          checked={automaticWebDavSync}
-          disabled={!isWebDavConfigured || !game?.executablePath}
-          onChange={onToggleAutomaticWebDavSync}
-        />
-      </div>
+      {isWebDavConfigured && (
+        <div className="cloud-sync-panel__automatic-sync">
+          <CheckboxField
+            label={
+              <div className="cloud-sync-panel__automatic-sync-label">
+                {t("enable_automatic_webdav_sync")}
+                <span className="cloud-sync-panel__automatic-sync-badge">
+                  WebDAV
+                </span>
+              </div>
+            }
+            checked={automaticWebDavSync}
+            disabled={!game?.executablePath}
+            onChange={onToggleAutomaticWebDavSync}
+          />
+        </div>
+      )}
 
       <div className="cloud-sync-panel__header">
         <div className="cloud-sync-panel__title-container">

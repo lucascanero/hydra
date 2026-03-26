@@ -1,6 +1,5 @@
 import axios from "axios";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import * as tar from "tar";
 import type {
@@ -89,7 +88,13 @@ export class WebDavBackup {
       // Only include .tar files
       if (!href.endsWith(".tar")) continue;
 
-      const filename = href.split("/").pop() ?? href;
+      const rawFilename = href.split("/").pop() ?? href;
+      let filename = rawFilename;
+      try {
+        filename = decodeURIComponent(rawFilename);
+      } catch {
+        filename = rawFilename;
+      }
 
       const sizeMatch = block.match(
         /<[^:>\s]+:getcontentlength[^>]*>([\s\S]*?)<\/[^:>\s]+:getcontentlength>/i
@@ -404,13 +409,10 @@ export class WebDavBackup {
         webDavPassword!
       );
 
-      const timestamp = Date.now();
-      const hostname = os.hostname();
-      const safeLabel = label
-        ? `_${label.replace(/[^a-z0-9_-]/gi, "_")}`.slice(0, 64)
-        : "";
-      const filename = `${hostname}_${timestamp}${safeLabel}.tar`;
-      const uploadPath = `${gameDir}/${filename}`;
+      const sanitizedLabel = (label ?? "").trim();
+      const filename = `${(sanitizedLabel || CloudSync.getBackupLabel(false)).trim()}.tar`;
+      const encodedFilename = encodeURIComponent(filename);
+      const uploadPath = `${gameDir}/${encodedFilename}`;
       const uploadUrl = WebDavBackup.buildUrl(webDavHost!, uploadPath);
 
       const fileBuffer = await fs.promises.readFile(bundleLocation);
