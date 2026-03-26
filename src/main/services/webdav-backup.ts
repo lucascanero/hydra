@@ -37,12 +37,22 @@ const addWinePrefixToWindowsPath = (
 };
 
 export class WebDavBackup {
+  private static readonly metadataFilename = ".hydra-backups-metadata.json";
+
+  private static normalizeRemotePath(remotePath: string) {
+    const normalized = remotePath.trim();
+    if (!normalized) return "";
+    return normalized.startsWith("/") ? normalized : `/${normalized}`;
+  }
+
   private static buildUrl(host: string, remotePath: string) {
     const base = host.endsWith("/") ? host.slice(0, -1) : host;
-    const normalized = remotePath.startsWith("/")
-      ? remotePath
-      : `/${remotePath}`;
+    const normalized = this.normalizeRemotePath(remotePath);
     return `${base}${normalized}`;
+  }
+
+  private static getMetadataPath(gameDir: string) {
+    return this.normalizeRemotePath(`${gameDir}/${this.metadataFilename}`);
   }
 
   private static getDeleteHrefCandidates(href: string): string[] {
@@ -148,6 +158,168 @@ export class WebDavBackup {
     });
   }
 
+  private static normalizeBackupEntries(entries: unknown): WebDavBackupEntry[] {
+    if (!Array.isArray(entries)) return [];
+
+    return entries
+      .map((entry): WebDavBackupEntry | null => {
+        if (!entry || typeof entry !== "object") return null;
+
+        const { href, filename, sizeInBytes, createdAt } = entry as Record<
+          string,
+          unknown
+        >;
+        const normalizedHref =
+          typeof href === "string" ? this.normalizeRemotePath(href) : "";
+        const normalizedFilename = typeof filename === "string" ? filename : "";
+        const normalizedSize =
+          typeof sizeInBytes === "number" && Number.isFinite(sizeInBytes)
+            ? Math.max(0, sizeInBytes)
+            : 0;
+        const normalizedCreatedAt =
+          typeof createdAt === "string" ? createdAt : "";
+
+        if (!normalizedHref || !normalizedFilename) return null;
+        if (!normalizedFilename.endsWith(".tar")) return null;
+
+        return {
+          href: normalizedHref,
+          filename: normalizedFilename,
+          sizeInBytes: normalizedSize,
+          createdAt: normalizedCreatedAt,
+        };
+      })
+      .filter((entry): entry is WebDavBackupEntry => entry !== null);
+  }
+
+  private static sortEntriesByDate(entries: WebDavBackupEntry[]) {
+    return [...entries].sort((a, b) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA;
+    });
+  }
+
+  private static async readMetadata(
+    host: string,
+    gameDir: string,
+    username: string,
+    password: string
+  ): Promise<WebDavBackupEntry[] | null> {
+    const metadataPath = this.getMetadataPath(gameDir);
+    const metadataUrl = this.buildUrl(host, metadataPath);
+
+    const response = await axios
+      .get(metadataUrl, {
+        auth: { username, password },
+        responseType: "text",
+        validateStatus: (status) =>
+          (status >= 200 && status < 300) || status === 404,
+      })
+      .catch((err) => {
+        logger.warn("Failed to read WebDAV metadata file", {
+          metadataUrl,
+          err,
+        });
+        return null;
+      });
+
+    if (!response || response.status === 404) {
+      return null;
+    }
+
+    try {
+      const metadata = JSON.parse(String(response.data)) as {
+        backups?: unknown;
+      };
+
+      return this.sortEntriesByDate(
+        this.normalizeBackupEntries(metadata?.backups ?? [])
+      );
+    } catch (err) {
+      logger.warn("Failed to parse WebDAV metadata file", { metadataUrl, err });
+      return null;
+    }
+  }
+
+  private static async writeMetadata(
+    host: string,
+    gameDir: string,
+    username: string,
+    password: string,
+    backups: WebDavBackupEntry[]
+  ) {
+    const metadataPath = this.getMetadataPath(gameDir);
+    const metadataUrl = this.buildUrl(host, metadataPath);
+
+    await axios.put(
+      metadataUrl,
+      JSON.stringify(
+        {
+          version: 1,
+          updatedAt: new Date().toISOString(),
+          backups: this.sortEntriesByDate(this.normalizeBackupEntries(backups)),
+        },
+        null,
+        2
+      ),
+      {
+        auth: { username, password },
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  private static async upsertMetadataEntry(
+    host: string,
+    gameDir: string,
+    username: string,
+    password: string,
+    entry: WebDavBackupEntry
+  ) {
+    const currentEntries =
+      (await this.readMetadata(host, gameDir, username, password)) ?? [];
+    const normalizedEntry = this.normalizeBackupEntries([entry])[0];
+
+    if (!normalizedEntry) return;
+
+    const merged = currentEntries.filter(
+      (backup) =>
+        backup.href !== normalizedEntry.href &&
+        backup.filename !== normalizedEntry.filename
+    );
+    merged.push(normalizedEntry);
+
+    await this.writeMetadata(host, gameDir, username, password, merged);
+  }
+
+  private static async removeMetadataEntry(
+    host: string,
+    gameDir: string,
+    username: string,
+    password: string,
+    href: string
+  ) {
+    const currentEntries = await this.readMetadata(
+      host,
+      gameDir,
+      username,
+      password
+    );
+    if (!currentEntries) return;
+
+    const hrefCandidates = this.getDeleteHrefCandidates(href).map((candidate) =>
+      this.normalizeRemotePath(candidate)
+    );
+    const hrefSet = new Set(hrefCandidates);
+
+    const filtered = currentEntries.filter((entry) => !hrefSet.has(entry.href));
+
+    if (filtered.length === currentEntries.length) return;
+
+    await this.writeMetadata(host, gameDir, username, password, filtered);
+  }
+
   private static restoreBackup(
     backupPath: string,
     objectId: string,
@@ -248,6 +420,17 @@ export class WebDavBackup {
 
     const location = (webDavLocation ?? "/hydra-backups").replace(/\/$/, "");
     const gameDir = `${location}/${shop}-${objectId}`;
+    const metadataBackups = await WebDavBackup.readMetadata(
+      webDavHost!,
+      gameDir,
+      webDavUsername!,
+      webDavPassword!
+    );
+
+    if (metadataBackups) {
+      return metadataBackups;
+    }
+
     const url = WebDavBackup.buildUrl(webDavHost!, gameDir);
 
     const response = await axios.request({
@@ -261,7 +444,29 @@ export class WebDavBackup {
 
     if (response.status === 404) return [];
 
-    return WebDavBackup.parsePropfindListing(response.data as string);
+    const listedBackups = WebDavBackup.parsePropfindListing(
+      response.data as string
+    );
+
+    if (listedBackups.length > 0) {
+      WebDavBackup.writeMetadata(
+        webDavHost!,
+        gameDir,
+        webDavUsername!,
+        webDavPassword!,
+        listedBackups
+      ).catch((err) => {
+        logger.warn(
+          "Failed to seed WebDAV metadata file from PROPFIND listing",
+          {
+            gameDir,
+            err,
+          }
+        );
+      });
+    }
+
+    return listedBackups;
   }
 
   public static async downloadAndRestoreBackup(
@@ -361,8 +566,8 @@ export class WebDavBackup {
   }
 
   public static async deleteBackup(
-    _objectId: string,
-    _shop: GameShop,
+    objectId: string,
+    shop: GameShop,
     href: string
   ): Promise<void> {
     const preferences = await db
@@ -375,7 +580,10 @@ export class WebDavBackup {
       throw new Error("WebDAV not configured");
     }
 
-    const { webDavHost, webDavUsername, webDavPassword } = preferences!;
+    const { webDavHost, webDavUsername, webDavPassword, webDavLocation } =
+      preferences!;
+    const location = (webDavLocation ?? "/hydra-backups").replace(/\/$/, "");
+    const gameDir = `${location}/${shop}-${objectId}`;
 
     const hrefCandidates = WebDavBackup.getDeleteHrefCandidates(href);
     let lastStatus = 404;
@@ -392,6 +600,19 @@ export class WebDavBackup {
       });
 
       if (response.status >= 200 && response.status < 300) {
+        await WebDavBackup.removeMetadataEntry(
+          webDavHost!,
+          gameDir,
+          webDavUsername!,
+          webDavPassword!,
+          href
+        ).catch((err) => {
+          logger.warn("Failed to update WebDAV metadata after delete", {
+            href,
+            gameDir,
+            err,
+          });
+        });
         return;
       }
 
@@ -453,9 +674,11 @@ export class WebDavBackup {
       );
 
       const sanitizedLabel = (label ?? "").trim();
-      const filename = `${(sanitizedLabel || CloudSync.getBackupLabel(false)).trim()}.tar`;
+      const filename = `${sanitizedLabel || CloudSync.getBackupLabel(false)}.tar`;
       const encodedFilename = encodeURIComponent(filename);
-      const uploadPath = `${gameDir}/${encodedFilename}`;
+      const uploadPath = WebDavBackup.normalizeRemotePath(
+        `${gameDir}/${encodedFilename}`
+      );
       const uploadUrl = WebDavBackup.buildUrl(webDavHost!, uploadPath);
 
       const fileBuffer = await fs.promises.readFile(bundleLocation);
@@ -465,6 +688,25 @@ export class WebDavBackup {
         headers: { "Content-Type": "application/octet-stream" },
         maxBodyLength: Infinity,
         maxContentLength: Infinity,
+      });
+
+      await WebDavBackup.upsertMetadataEntry(
+        webDavHost!,
+        gameDir,
+        webDavUsername!,
+        webDavPassword!,
+        {
+          href: uploadPath,
+          filename,
+          sizeInBytes: fileBuffer.byteLength,
+          createdAt: new Date().toISOString(),
+        }
+      ).catch((err) => {
+        logger.warn("Failed to update WebDAV metadata after upload", {
+          uploadPath,
+          gameDir,
+          err,
+        });
       });
 
       WindowManager.mainWindow?.webContents.send(
