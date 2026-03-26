@@ -38,6 +38,7 @@ import type {
   ProtonVersion,
   CreateSteamShortcutOptions,
   TorrentFilesResponse,
+  WebDavBackupEntry,
 } from "@types";
 import type { AxiosProgressEvent } from "axios";
 
@@ -104,6 +105,11 @@ declare global {
       shop: GameShop,
       objectId: string,
       automaticCloudSync: boolean
+    ) => Promise<void>;
+    toggleAutomaticWebDavSync: (
+      shop: GameShop,
+      objectId: string,
+      automaticWebDavSync: boolean
     ) => Promise<void>;
     toggleGameMangohud: (
       shop: GameShop,
@@ -361,6 +367,25 @@ declare global {
       username: string,
       password: string
     ) => Promise<void>;
+    listWebDavBackups: (
+      objectId: string,
+      shop: GameShop
+    ) => Promise<WebDavBackupEntry[]>;
+    downloadWebDavBackup: (
+      objectId: string,
+      shop: GameShop,
+      href: string
+    ) => Promise<void>;
+    onWebDavBackupDownloadProgress: (
+      objectId: string,
+      shop: GameShop,
+      cb: (progress: AxiosProgressEvent) => void
+    ) => () => Electron.IpcRenderer;
+    onWebDavBackupDownloadComplete: (
+      objectId: string,
+      shop: GameShop,
+      cb: (success: boolean) => void
+    ) => () => Electron.IpcRenderer;
 
     /* Misc */
     openExternal: (src: string) => Promise<void>;

@@ -342,6 +342,13 @@ export interface GameArtifact {
   isFrozen: boolean;
 }
 
+export interface WebDavBackupEntry {
+  href: string;
+  filename: string;
+  sizeInBytes: number;
+  createdAt: string;
+}
+
 export type NotificationType =
   | "FRIEND_REQUEST_RECEIVED"
   | "FRIEND_REQUEST_ACCEPTED"

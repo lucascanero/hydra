@@ -269,7 +269,7 @@ export const watchProcesses = async () => {
 };
 
 function triggerWebDavAutoBackup(game: Game, context: string) {
-  if (game.shop === "custom" || !game.automaticCloudSync) return;
+  if (game.shop === "custom" || !game.automaticWebDavSync) return;
 
   db.get<string, UserPreferences>(levelKeys.userPreferences, {
     valueEncoding: "json",

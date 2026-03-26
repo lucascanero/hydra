@@ -145,6 +145,17 @@ contextBridge.exposeInMainWorld("electron", {
       objectId,
       automaticCloudSync
     ),
+  toggleAutomaticWebDavSync: (
+    shop: GameShop,
+    objectId: string,
+    automaticWebDavSync: boolean
+  ) =>
+    ipcRenderer.invoke(
+      "toggleAutomaticWebDavSync",
+      shop,
+      objectId,
+      automaticWebDavSync
+    ),
   toggleGameMangohud: (
     shop: GameShop,
     objectId: string,
@@ -460,6 +471,48 @@ contextBridge.exposeInMainWorld("electron", {
     username: string,
     password: string
   ) => ipcRenderer.invoke("testWebDavConnection", host, username, password),
+  listWebDavBackups: (objectId: string, shop: GameShop) =>
+    ipcRenderer.invoke("listWebDavBackups", objectId, shop),
+  downloadWebDavBackup: (objectId: string, shop: GameShop, href: string) =>
+    ipcRenderer.invoke("downloadWebDavBackup", objectId, shop, href),
+  onWebDavBackupDownloadProgress: (
+    objectId: string,
+    shop: GameShop,
+    cb: (progress: AxiosProgressEvent) => void
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      progress: AxiosProgressEvent
+    ) => cb(progress);
+    ipcRenderer.on(
+      `on-webdav-backup-download-progress-${objectId}-${shop}`,
+      listener
+    );
+    return () =>
+      ipcRenderer.removeListener(
+        `on-webdav-backup-download-progress-${objectId}-${shop}`,
+        listener
+      );
+  },
+  onWebDavBackupDownloadComplete: (
+    objectId: string,
+    shop: GameShop,
+    cb: (success: boolean) => void
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      success: boolean
+    ) => cb(success);
+    ipcRenderer.on(
+      `on-webdav-backup-download-complete-${objectId}-${shop}`,
+      listener
+    );
+    return () =>
+      ipcRenderer.removeListener(
+        `on-webdav-backup-download-complete-${objectId}-${shop}`,
+        listener
+      );
+  },
 
   /* Misc */
   ping: () => ipcRenderer.invoke("ping"),

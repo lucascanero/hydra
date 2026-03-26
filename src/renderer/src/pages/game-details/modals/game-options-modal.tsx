@@ -41,6 +41,7 @@ import { CompatibilitySettingsSection } from "./game-options-modal/compatibility
 import { DownloadsSettingsSection } from "./game-options-modal/downloads-section";
 import { DangerZoneSection } from "./game-options-modal/danger-zone-section";
 import { HydraCloudSettingsSection } from "./game-options-modal/hydra-cloud-section";
+import { WebDavSettingsSection } from "./game-options-modal/webdav-section";
 import type { GameSettingsCategoryId } from "./game-options-modal/types";
 import { CreateSteamShortcutModal } from "./create-steam-shortcut-modal";
 
@@ -87,6 +88,9 @@ export function GameOptionsModal({
   const [isDeletingAchievements, setIsDeletingAchievements] = useState(false);
   const [automaticCloudSync, setAutomaticCloudSync] = useState(
     game.automaticCloudSync ?? false
+  );
+  const [automaticWebDavSync, setAutomaticWebDavSync] = useState(
+    game.automaticWebDavSync ?? false
   );
   const [creatingSteamShortcut, setCreatingSteamShortcut] = useState(false);
   const [saveFolderPath, setSaveFolderPath] = useState<string | null>(null);
@@ -581,6 +585,11 @@ export function GameOptionsModal({
         label: t("settings_category_hydra_cloud"),
         icon: <CloudIcon size={16} />,
       },
+      {
+        id: "webdav" as const,
+        label: t("settings_category_webdav"),
+        icon: <CloudIcon size={16} />,
+      },
       ...(shouldShowWinePrefixConfiguration
         ? [
             {
@@ -654,6 +663,18 @@ export function GameOptionsModal({
       await levelDBService.put(gameKey, updated, "games");
     }
 
+    updateGame();
+  };
+
+  const handleToggleAutomaticWebDavSync = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    setAutomaticWebDavSync(event.target.checked);
+    await window.electron.toggleAutomaticWebDavSync(
+      game.shop,
+      game.objectId,
+      event.target.checked
+    );
     updateGame();
   };
 
@@ -751,6 +772,14 @@ export function GameOptionsModal({
                 game={game}
                 automaticCloudSync={automaticCloudSync}
                 onToggleAutomaticCloudSync={handleToggleAutomaticCloudSync}
+              />
+            )}
+
+            {selectedCategory === "webdav" && (
+              <WebDavSettingsSection
+                game={game}
+                automaticWebDavSync={automaticWebDavSync}
+                onToggleAutomaticWebDavSync={handleToggleAutomaticWebDavSync}
               />
             )}
 
