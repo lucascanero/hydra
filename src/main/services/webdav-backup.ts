@@ -45,6 +45,38 @@ export class WebDavBackup {
     return `${base}${normalized}`;
   }
 
+  private static getDeleteHrefCandidates(href: string): string[] {
+    const candidates = new Set<string>();
+    let normalizedHref = href.trim();
+
+    if (normalizedHref.length === 0) {
+      return [];
+    }
+
+    const addEncodedAndDecoded = (value: string) => {
+      candidates.add(value);
+      try {
+        candidates.add(decodeURIComponent(value));
+      } catch {
+        // ignore malformed URI components
+      }
+      candidates.add(encodeURI(value));
+    };
+
+    if (/^https?:\/\//i.test(normalizedHref)) {
+      try {
+        const parsed = new URL(normalizedHref);
+        normalizedHref = `${parsed.pathname}${parsed.search}`;
+      } catch {
+        return [];
+      }
+    }
+
+    addEncodedAndDecoded(normalizedHref);
+
+    return Array.from(candidates);
+  }
+
   private static async ensureDirectory(
     host: string,
     remotePath: string,
@@ -345,17 +377,28 @@ export class WebDavBackup {
 
     const { webDavHost, webDavUsername, webDavPassword } = preferences!;
 
-    const deleteUrl = WebDavBackup.buildUrl(webDavHost!, href);
+    const hrefCandidates = WebDavBackup.getDeleteHrefCandidates(href);
+    let lastStatus = 404;
 
-    const response = await axios.request({
-      method: "DELETE",
-      url: deleteUrl,
-      auth: { username: webDavUsername!, password: webDavPassword! },
-      validateStatus: (status) =>
-        (status >= 200 && status < 300) || status === 404,
-    });
+    for (const hrefCandidate of hrefCandidates) {
+      const deleteUrl = WebDavBackup.buildUrl(webDavHost!, hrefCandidate);
 
-    if (response.status === 404) {
+      const response = await axios.request({
+        method: "DELETE",
+        url: deleteUrl,
+        auth: { username: webDavUsername!, password: webDavPassword! },
+        validateStatus: (status) =>
+          (status >= 200 && status < 300) || status === 404,
+      });
+
+      if (response.status >= 200 && response.status < 300) {
+        return;
+      }
+
+      lastStatus = response.status;
+    }
+
+    if (lastStatus === 404) {
       throw new Error("WebDAV backup not found");
     }
   }

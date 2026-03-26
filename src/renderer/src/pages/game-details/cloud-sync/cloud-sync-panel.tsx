@@ -736,7 +736,7 @@ export function CloudSyncPanel({
                         ) : (
                           <HistoryIcon />
                         )}
-                        {t("webdav_restore_backup")}
+                        {t("install_backup")}
                       </Button>
                       <DropdownMenu
                         align="end"
