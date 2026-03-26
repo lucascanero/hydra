@@ -376,6 +376,11 @@ declare global {
       shop: GameShop,
       href: string
     ) => Promise<void>;
+    deleteWebDavBackup: (
+      objectId: string,
+      shop: GameShop,
+      href: string
+    ) => Promise<void>;
     onWebDavBackupDownloadProgress: (
       objectId: string,
       shop: GameShop,

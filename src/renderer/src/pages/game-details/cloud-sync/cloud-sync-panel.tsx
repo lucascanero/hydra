@@ -47,6 +47,7 @@ export function CloudSyncPanel({
   onToggleAutomaticWebDavSync,
 }: Readonly<CloudSyncPanelProps>) {
   const [deletingArtifact, setDeletingArtifact] = useState(false);
+  const [deletingWebDavBackup, setDeletingWebDavBackup] = useState(false);
   const [backupDownloadProgress, setBackupDownloadProgress] =
     useState<AxiosProgressEvent | null>(null);
   const [artifactToRename, setArtifactToRename] = useState<GameArtifact | null>(
@@ -57,6 +58,7 @@ export function CloudSyncPanel({
   const [restoringWebDavBackup, setRestoringWebDavBackup] = useState(false);
   const [webDavBackupDownloadProgress, setWebDavBackupDownloadProgress] =
     useState<AxiosProgressEvent | null>(null);
+  const [pinnedWebDavBackups, setPinnedWebDavBackups] = useState<string[]>([]);
 
   const { t } = useTranslation("game_details");
   const { t: tHydraCloud } = useTranslation("hydra_cloud");
@@ -96,6 +98,7 @@ export function CloudSyncPanel({
       userPreferences?.webDavUsername &&
       userPreferences?.webDavPassword
   );
+  const webDavPinnedStorageKey = `pinned-webdav-backups-${shop}-${objectId}`;
 
   const handleDeleteArtifactClick = async (gameArtifactId: string) => {
     setDeletingArtifact(true);
@@ -108,6 +111,18 @@ export function CloudSyncPanel({
       setDeletingArtifact(false);
     }
   };
+
+  const savePinnedWebDavBackups = useCallback(
+    (hrefs: string[]) => {
+      setPinnedWebDavBackups(hrefs);
+      if (!objectId) return;
+      window.localStorage.setItem(
+        webDavPinnedStorageKey,
+        JSON.stringify(hrefs)
+      );
+    },
+    [objectId, webDavPinnedStorageKey]
+  );
 
   const loadWebDavBackups = useCallback(async () => {
     if (!isWebDavConfigured || !objectId) {
@@ -137,6 +152,35 @@ export function CloudSyncPanel({
       setRestoringWebDavBackup(false);
       showErrorToast(t("webdav_restore_failed"));
     }
+  };
+
+  const handleDeleteWebDavBackup = async (href: string) => {
+    if (!objectId) return;
+
+    setDeletingWebDavBackup(true);
+    try {
+      await window.electron.deleteWebDavBackup(objectId, shop, href);
+      showSuccessToast(t("backup_deleted"));
+      await loadWebDavBackups();
+      savePinnedWebDavBackups(
+        pinnedWebDavBackups.filter((pinnedHref) => pinnedHref !== href)
+      );
+    } catch {
+      showErrorToast(t("backup_deletion_failed"));
+    } finally {
+      setDeletingWebDavBackup(false);
+    }
+  };
+
+  const handleTogglePinWebDavBackup = (href: string) => {
+    if (pinnedWebDavBackups.includes(href)) {
+      savePinnedWebDavBackups(
+        pinnedWebDavBackups.filter((pinnedHref) => pinnedHref !== href)
+      );
+      return;
+    }
+
+    savePinnedWebDavBackups([...pinnedWebDavBackups, href]);
   };
 
   useEffect(() => {
@@ -185,6 +229,25 @@ export function CloudSyncPanel({
   }, [objectId, shop, showSuccessToast, showErrorToast, t]);
 
   useEffect(() => {
+    if (!objectId) return;
+
+    const savedPinnedWebDavBackups = window.localStorage.getItem(
+      webDavPinnedStorageKey
+    );
+    if (!savedPinnedWebDavBackups) {
+      setPinnedWebDavBackups([]);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(savedPinnedWebDavBackups);
+      setPinnedWebDavBackups(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setPinnedWebDavBackups([]);
+    }
+  }, [objectId, webDavPinnedStorageKey]);
+
+  useEffect(() => {
     if (!hasActiveSubscription && !isWebDavConfigured) return;
 
     getGameBackupPreview();
@@ -209,6 +272,18 @@ export function CloudSyncPanel({
       loadWebDavBackups();
     }
   }, [isWebDavConfigured, loadWebDavBackups, uploadingBackup]);
+
+  useEffect(() => {
+    if (pinnedWebDavBackups.length === 0 || webDavBackups.length === 0) return;
+
+    const existingHrefs = new Set(webDavBackups.map((backup) => backup.href));
+    const validPinned = pinnedWebDavBackups.filter((href) =>
+      existingHrefs.has(href)
+    );
+    if (validPinned.length !== pinnedWebDavBackups.length) {
+      savePinnedWebDavBackups(validPinned);
+    }
+  }, [pinnedWebDavBackups, savePinnedWebDavBackups, webDavBackups]);
 
   const handleBackupInstallClick = async (artifactId: string) => {
     setBackupDownloadProgress(null);
@@ -249,6 +324,7 @@ export function CloudSyncPanel({
       hydraArtifact?: GameArtifact;
       webDavBackup?: WebDavBackupEntry;
       createdAt: string;
+      isPinned: boolean;
     }> = [];
 
     const consumedHydraIds = new Set<string>();
@@ -266,6 +342,9 @@ export function CloudSyncPanel({
           hydraArtifact: matchingHydra,
           webDavBackup,
           createdAt: matchingHydra.createdAt,
+          isPinned:
+            matchingHydra.isFrozen ||
+            pinnedWebDavBackups.includes(webDavBackup.href),
         });
       }
     }
@@ -276,6 +355,7 @@ export function CloudSyncPanel({
         key: `hydra-${artifact.id}`,
         hydraArtifact: artifact,
         createdAt: artifact.createdAt,
+        isPinned: artifact.isFrozen,
       });
     }
 
@@ -285,15 +365,16 @@ export function CloudSyncPanel({
         key: `webdav-${webDavBackup.href}`,
         webDavBackup,
         createdAt: webDavBackup.createdAt,
+        isPinned: pinnedWebDavBackups.includes(webDavBackup.href),
       });
     }
 
     return orderBy(
       rows,
-      [(row) => new Date(row.createdAt).getTime()],
-      ["desc"]
+      [(row) => !row.isPinned, (row) => new Date(row.createdAt).getTime()],
+      ["asc", "desc"]
     );
-  }, [artifacts, hydraByLabel, webDavBackups]);
+  }, [artifacts, hydraByLabel, pinnedWebDavBackups, webDavBackups]);
 
   const backupStateLabel = useMemo(() => {
     if (uploadingBackup) {
@@ -372,6 +453,7 @@ export function CloudSyncPanel({
     uploadingBackup ||
     restoringBackup ||
     deletingArtifact ||
+    deletingWebDavBackup ||
     freezingArtifact ||
     restoringWebDavBackup;
 
@@ -490,6 +572,9 @@ export function CloudSyncPanel({
             const createdAt =
               artifact?.createdAt ?? webDavBackup?.createdAt ?? "";
             const isFrozen = artifact?.isFrozen ?? false;
+            const isWebDavPinned = webDavBackup
+              ? pinnedWebDavBackups.includes(webDavBackup.href)
+              : false;
 
             return (
               <li key={row.key} className="cloud-sync-panel__artifact">
@@ -571,21 +656,57 @@ export function CloudSyncPanel({
                         align="end"
                         items={[
                           {
-                            label: isFrozen
-                              ? t("unfreeze_backup")
-                              : t("freeze_backup"),
+                            label: webDavBackup
+                              ? isFrozen
+                                ? `${t("unfreeze_backup")} (Hydra Cloud)`
+                                : `${t("freeze_backup")} (Hydra Cloud)`
+                              : isFrozen
+                                ? t("unfreeze_backup")
+                                : t("freeze_backup"),
                             icon: isFrozen ? <PinSlashIcon /> : <PinIcon />,
                             onClick: () =>
                               handleFreezeArtifactClick(artifact.id, !isFrozen),
                             disabled: disableActions,
                           },
+                          ...(webDavBackup
+                            ? [
+                                {
+                                  label: isWebDavPinned
+                                    ? `${t("unfreeze_backup")} (WebDAV)`
+                                    : `${t("freeze_backup")} (WebDAV)`,
+                                  icon: isWebDavPinned ? (
+                                    <PinSlashIcon />
+                                  ) : (
+                                    <PinIcon />
+                                  ),
+                                  onClick: () =>
+                                    handleTogglePinWebDavBackup(
+                                      webDavBackup.href
+                                    ),
+                                  disabled: disableActions,
+                                },
+                              ]
+                            : []),
                           {
-                            label: t("delete_backup"),
+                            label: webDavBackup
+                              ? `${t("delete_backup")} (Hydra Cloud)`
+                              : t("delete_backup"),
                             icon: <TrashIcon />,
                             onClick: () =>
                               handleDeleteArtifactClick(artifact.id),
                             disabled: disableActions || isFrozen,
                           },
+                          ...(webDavBackup
+                            ? [
+                                {
+                                  label: `${t("delete_backup")} (WebDAV)`,
+                                  icon: <TrashIcon />,
+                                  onClick: () =>
+                                    handleDeleteWebDavBackup(webDavBackup.href),
+                                  disabled: disableActions,
+                                },
+                              ]
+                            : []),
                         ]}
                       >
                         <Button
@@ -599,21 +720,56 @@ export function CloudSyncPanel({
                     </>
                   )}
                   {!artifact && webDavBackup && (
-                    <Button
-                      type="button"
-                      onClick={() =>
-                        handleRestoreWebDavBackup(webDavBackup.href)
-                      }
-                      disabled={disableActions}
-                      theme="outline"
-                    >
-                      {restoringWebDavBackup ? (
-                        <SyncIcon className="cloud-sync-panel__sync-icon" />
-                      ) : (
-                        <HistoryIcon />
-                      )}
-                      {t("webdav_restore_backup")}
-                    </Button>
+                    <>
+                      <Button
+                        type="button"
+                        onClick={() =>
+                          handleRestoreWebDavBackup(webDavBackup.href)
+                        }
+                        disabled={disableActions}
+                        theme="outline"
+                      >
+                        {restoringWebDavBackup ? (
+                          <SyncIcon className="cloud-sync-panel__sync-icon" />
+                        ) : (
+                          <HistoryIcon />
+                        )}
+                        {t("webdav_restore_backup")}
+                      </Button>
+                      <DropdownMenu
+                        align="end"
+                        items={[
+                          {
+                            label: isWebDavPinned
+                              ? t("unfreeze_backup")
+                              : t("freeze_backup"),
+                            icon: isWebDavPinned ? (
+                              <PinSlashIcon />
+                            ) : (
+                              <PinIcon />
+                            ),
+                            onClick: () =>
+                              handleTogglePinWebDavBackup(webDavBackup.href),
+                            disabled: disableActions,
+                          },
+                          {
+                            label: t("delete_backup"),
+                            icon: <TrashIcon />,
+                            onClick: () =>
+                              handleDeleteWebDavBackup(webDavBackup.href),
+                            disabled: disableActions,
+                          },
+                        ]}
+                      >
+                        <Button
+                          type="button"
+                          theme="outline"
+                          tooltip={t("options")}
+                        >
+                          <MoreVertical size={16} />
+                        </Button>
+                      </DropdownMenu>
+                    </>
                   )}
                 </div>
               </li>

@@ -3,7 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as tar from "tar";
-import type { GameShop, LudusaviBackupMapping, UserPreferences, WebDavBackupEntry } from "@types";
+import type {
+  GameShop,
+  LudusaviBackupMapping,
+  UserPreferences,
+  WebDavBackupEntry,
+} from "@types";
 import { db, gamesSublevel, levelKeys } from "@main/level";
 import { logger } from "./logger";
 import { WindowManager } from "./window-manager";
@@ -315,6 +320,38 @@ export class WebDavBackup {
           err,
         });
       }
+    }
+  }
+
+  public static async deleteBackup(
+    _objectId: string,
+    _shop: GameShop,
+    href: string
+  ): Promise<void> {
+    const preferences = await db
+      .get<string, UserPreferences>(levelKeys.userPreferences, {
+        valueEncoding: "json",
+      })
+      .catch(() => null);
+
+    if (!WebDavBackup.isConfigured(preferences)) {
+      throw new Error("WebDAV not configured");
+    }
+
+    const { webDavHost, webDavUsername, webDavPassword } = preferences!;
+
+    const deleteUrl = WebDavBackup.buildUrl(webDavHost!, href);
+
+    const response = await axios.request({
+      method: "DELETE",
+      url: deleteUrl,
+      auth: { username: webDavUsername!, password: webDavPassword! },
+      validateStatus: (status) =>
+        (status >= 200 && status < 300) || status === 404,
+    });
+
+    if (response.status === 404) {
+      throw new Error("WebDAV backup not found");
     }
   }
 

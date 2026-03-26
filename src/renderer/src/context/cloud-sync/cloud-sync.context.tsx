@@ -85,7 +85,10 @@ export function CloudSyncContextProvider({
 
   const { showSuccessToast, showErrorToast } = useToast();
 
-  const userPreferences = useAppSelector((state) => state.userPreferences.value);
+  const userPreferences = useAppSelector(
+    (state) => state.userPreferences.value
+  );
+  const userDetails = useAppSelector((state) => state.userDetails.userDetails);
 
   const downloadGameArtifact = useCallback(
     async (gameArtifactId: string) => {
@@ -141,22 +144,42 @@ export function CloudSyncContextProvider({
         userPreferences?.webDavHost &&
         userPreferences?.webDavUsername &&
         userPreferences?.webDavPassword;
+      const shouldUploadToHydraCloud = Boolean(
+        userDetails?.subscription?.expiresAt &&
+          new Date(userDetails.subscription.expiresAt) > new Date()
+      );
 
-      const uploadPromise = isWebDavConfigured
-        ? window.electron.uploadSaveGameToWebDav(
+      const uploadTargets: Promise<void>[] = [];
+
+      if (shouldUploadToHydraCloud) {
+        uploadTargets.push(
+          window.electron.uploadSaveGame(objectId, shop, downloadOptionTitle)
+        );
+      }
+
+      if (isWebDavConfigured) {
+        uploadTargets.push(
+          window.electron.uploadSaveGameToWebDav(
             objectId,
             shop,
             downloadOptionTitle
           )
-        : window.electron.uploadSaveGame(objectId, shop, downloadOptionTitle);
+        );
+      }
 
-      uploadPromise.catch((err) => {
+      if (uploadTargets.length === 0) {
+        setUploadingBackup(false);
+        showErrorToast(t("backup_failed"));
+        return;
+      }
+
+      Promise.all(uploadTargets).catch((err) => {
         setUploadingBackup(false);
         logger.error("Failed to upload save game", { objectId, shop, err });
         showErrorToast(t("backup_failed"));
       });
     },
-    [objectId, shop, t, showErrorToast, userPreferences]
+    [objectId, shop, t, showErrorToast, userPreferences, userDetails]
   );
 
   const toggleArtifactFreeze = useCallback(

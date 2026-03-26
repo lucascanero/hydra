@@ -6,3 +6,4 @@ import "./upload-save-game-to-webdav";
 import "./test-webdav-connection";
 import "./list-webdav-backups";
 import "./download-webdav-backup";
+import "./delete-webdav-backup";

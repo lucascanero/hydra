@@ -466,15 +466,14 @@ contextBridge.exposeInMainWorld("electron", {
       shop,
       downloadOptionTitle
     ),
-  testWebDavConnection: (
-    host: string,
-    username: string,
-    password: string
-  ) => ipcRenderer.invoke("testWebDavConnection", host, username, password),
+  testWebDavConnection: (host: string, username: string, password: string) =>
+    ipcRenderer.invoke("testWebDavConnection", host, username, password),
   listWebDavBackups: (objectId: string, shop: GameShop) =>
     ipcRenderer.invoke("listWebDavBackups", objectId, shop),
   downloadWebDavBackup: (objectId: string, shop: GameShop, href: string) =>
     ipcRenderer.invoke("downloadWebDavBackup", objectId, shop, href),
+  deleteWebDavBackup: (objectId: string, shop: GameShop, href: string) =>
+    ipcRenderer.invoke("deleteWebDavBackup", objectId, shop, href),
   onWebDavBackupDownloadProgress: (
     objectId: string,
     shop: GameShop,
@@ -499,10 +498,8 @@ contextBridge.exposeInMainWorld("electron", {
     shop: GameShop,
     cb: (success: boolean) => void
   ) => {
-    const listener = (
-      _event: Electron.IpcRendererEvent,
-      success: boolean
-    ) => cb(success);
+    const listener = (_event: Electron.IpcRendererEvent, success: boolean) =>
+      cb(success);
     ipcRenderer.on(
       `on-webdav-backup-download-complete-${objectId}-${shop}`,
       listener
