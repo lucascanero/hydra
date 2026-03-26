@@ -347,6 +347,9 @@ export interface WebDavBackupEntry {
   filename: string;
   sizeInBytes: number;
   createdAt: string;
+  label?: string;
+  hostname?: string;
+  downloadOptionTitle?: string | null;
 }
 
 export type NotificationType =

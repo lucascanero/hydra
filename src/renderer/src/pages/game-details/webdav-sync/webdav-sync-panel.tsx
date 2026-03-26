@@ -8,6 +8,7 @@ import {
   ClockIcon,
   DeviceDesktopIcon,
   HistoryIcon,
+  InfoIcon,
   SyncIcon,
   UploadIcon,
 } from "@primer/octicons-react";
@@ -71,26 +72,28 @@ export function WebDavSyncPanel({
   }, [isWebDavConfigured, loadBackups]);
 
   useEffect(() => {
-    const removeProgressListener = window.electron.onWebDavBackupDownloadProgress(
-      objectId!,
-      shop,
-      (progressEvent) => {
-        setBackupDownloadProgress(progressEvent);
-      }
-    );
-
-    const removeCompleteListener = window.electron.onWebDavBackupDownloadComplete(
-      objectId!,
-      shop,
-      (success) => {
-        setRestoringBackup(false);
-        if (success) {
-          showSuccessToast(t("webdav_restore_success"));
-        } else {
-          showErrorToast(t("webdav_restore_failed"));
+    const removeProgressListener =
+      window.electron.onWebDavBackupDownloadProgress(
+        objectId!,
+        shop,
+        (progressEvent) => {
+          setBackupDownloadProgress(progressEvent);
         }
-      }
-    );
+      );
+
+    const removeCompleteListener =
+      window.electron.onWebDavBackupDownloadComplete(
+        objectId!,
+        shop,
+        (success) => {
+          setRestoringBackup(false);
+          if (success) {
+            showSuccessToast(t("webdav_restore_success"));
+          } else {
+            showErrorToast(t("webdav_restore_failed"));
+          }
+        }
+      );
 
     return () => {
       removeProgressListener();
@@ -229,7 +232,7 @@ export function WebDavSyncPanel({
               <div className="webdav-sync-panel__artifact-info">
                 <div className="webdav-sync-panel__artifact-header">
                   <span className="webdav-sync-panel__artifact-name">
-                    {backup.filename}
+                    {(backup.label ?? backup.filename).replace(/\.tar$/i, "")}
                   </span>
                   <small>{formatBytes(backup.sizeInBytes)}</small>
                 </div>
@@ -243,7 +246,14 @@ export function WebDavSyncPanel({
 
                 <span className="webdav-sync-panel__artifact-meta">
                   <DeviceDesktopIcon size={14} />
-                  {backup.filename.split("_")[0] ?? backup.filename}
+                  {backup.hostname ??
+                    backup.filename.split("_")[0] ??
+                    backup.filename}
+                </span>
+
+                <span className="webdav-sync-panel__artifact-meta">
+                  <InfoIcon size={14} />
+                  {backup.downloadOptionTitle ?? t("no_download_option_info")}
                 </span>
               </div>
 

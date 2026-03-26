@@ -565,10 +565,13 @@ export function CloudSyncPanel({
                 t("backup_from", {
                   date: formatDate(artifact.createdAt),
                 }))
-              : (webDavBackup?.filename ?? "").replace(/\.tar$/i, "");
+              : (webDavBackup?.label ?? webDavBackup?.filename ?? "").replace(
+                  /\.tar$/i,
+                  ""
+                );
             const hostname = artifact?.hostname
               ? artifact.hostname
-              : (webDavBackup?.filename.split("_")[0] ?? "");
+              : (webDavBackup?.hostname ?? "");
             const sizeInBytes =
               artifact?.artifactLengthInBytes ?? webDavBackup?.sizeInBytes ?? 0;
             const createdAt =
@@ -622,10 +625,12 @@ export function CloudSyncPanel({
                     </span>
                   )}
 
-                  {artifact && (
+                  {(artifact ||
+                    webDavBackup?.downloadOptionTitle !== undefined) && (
                     <span className="cloud-sync-panel__artifact-meta">
                       <InfoIcon size={14} />
-                      {artifact.downloadOptionTitle ??
+                      {artifact?.downloadOptionTitle ??
+                        webDavBackup?.downloadOptionTitle ??
                         t("no_download_option_info")}
                     </span>
                   )}

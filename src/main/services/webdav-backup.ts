@@ -16,6 +16,7 @@ import { Wine } from "./wine";
 import { backupsPath, publicProfilePath } from "@main/constants";
 import { addTrailingSlash, normalizePath } from "@main/helpers";
 import YAML from "yaml";
+import os from "node:os";
 
 const transformBackupPathIntoWindowsPath = (
   backupPath: string,
@@ -169,6 +170,10 @@ export class WebDavBackup {
           string,
           unknown
         >;
+        const { label, hostname, downloadOptionTitle } = entry as Record<
+          string,
+          unknown
+        >;
         const normalizedHref =
           typeof href === "string" ? this.normalizeRemotePath(href) : "";
         const normalizedFilename = typeof filename === "string" ? filename : "";
@@ -187,6 +192,13 @@ export class WebDavBackup {
           filename: normalizedFilename,
           sizeInBytes: normalizedSize,
           createdAt: normalizedCreatedAt,
+          label: typeof label === "string" ? label : undefined,
+          hostname: typeof hostname === "string" ? hostname : undefined,
+          downloadOptionTitle:
+            typeof downloadOptionTitle === "string" ||
+            downloadOptionTitle === null
+              ? downloadOptionTitle
+              : undefined,
         };
       })
       .filter((entry): entry is WebDavBackupEntry => entry !== null);
@@ -627,7 +639,7 @@ export class WebDavBackup {
   public static async uploadSaveGame(
     objectId: string,
     shop: GameShop,
-    _downloadOptionTitle: string | null,
+    downloadOptionTitle: string | null,
     label?: string
   ) {
     const preferences = await db
@@ -700,6 +712,9 @@ export class WebDavBackup {
           filename,
           sizeInBytes: fileBuffer.byteLength,
           createdAt: new Date().toISOString(),
+          label: filename.replace(/\.tar$/i, ""),
+          hostname: os.hostname(),
+          downloadOptionTitle,
         }
       ).catch((err) => {
         logger.warn("Failed to update WebDAV metadata after upload", {
