@@ -790,6 +790,7 @@
     "default_proton_version": "Default Proton version",
     "default_proton_version_description": "Select the Proton version used by Auto mode when a game has no custom override",
     "webdav": "WebDAV",
+    "enable_webdav": "Enable WebDAV",
     "webdav_description": "Use a WebDAV server to back up your game saves automatically, as an alternative to Hydra Cloud.",
     "webdav_host": "Server URL",
     "webdav_username": "Username",
