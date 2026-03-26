@@ -6,6 +6,7 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -82,6 +83,7 @@ export function CloudSyncContextProvider({
   const [showCloudSyncFilesModal, setShowCloudSyncFilesModal] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [freezingArtifact, setFreezingArtifact] = useState(false);
+  const pendingUploadCompletionsRef = useRef(0);
 
   const { showSuccessToast, showErrorToast } = useToast();
 
@@ -173,7 +175,10 @@ export function CloudSyncContextProvider({
         return;
       }
 
+      pendingUploadCompletionsRef.current = uploadTargets.length;
+
       Promise.all(uploadTargets).catch((err) => {
+        pendingUploadCompletionsRef.current = 0;
         setUploadingBackup(false);
         logger.error("Failed to upload save game", { objectId, shop, err });
         showErrorToast(t("backup_failed"));
@@ -206,10 +211,18 @@ export function CloudSyncContextProvider({
       objectId,
       shop,
       () => {
-        showSuccessToast(t("backup_uploaded"));
-        setUploadingBackup(false);
-        getGameArtifacts();
-        getGameBackupPreview();
+        if (pendingUploadCompletionsRef.current <= 0) {
+          return;
+        }
+
+        pendingUploadCompletionsRef.current -= 1;
+
+        if (pendingUploadCompletionsRef.current === 0) {
+          showSuccessToast(t("backup_uploaded"));
+          setUploadingBackup(false);
+          getGameArtifacts();
+          getGameBackupPreview();
+        }
       }
     );
 
