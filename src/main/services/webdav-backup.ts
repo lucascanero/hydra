@@ -4,6 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import * as tar from "tar";
 import type {
+  Game,
   GameShop,
   LudusaviBackupMapping,
   UnlockedAchievement,
@@ -12,7 +13,12 @@ import type {
   UserPreferences,
   WebDavBackupEntry,
 } from "@types";
-import { db, gamesSublevel, levelKeys } from "@main/level";
+import {
+  db,
+  gameAchievementsSublevel,
+  gamesSublevel,
+  levelKeys,
+} from "@main/level";
 import { logger } from "./logger";
 import { WindowManager } from "./window-manager";
 import { CloudSync } from "./cloud-sync";
@@ -74,6 +80,7 @@ export class WebDavBackup {
       {
         shop: GameShop;
         objectId: string;
+        playTimeInMilliseconds: number;
         updatedAt: string;
         achievements: UnlockedAchievement[];
       }
@@ -114,6 +121,7 @@ export class WebDavBackup {
           {
             shop: GameShop;
             objectId: string;
+            playTimeInMilliseconds: number;
             updatedAt: string;
             achievements: UnlockedAchievement[];
           }
@@ -159,6 +167,7 @@ export class WebDavBackup {
         {
           shop: GameShop;
           objectId: string;
+          playTimeInMilliseconds: number;
           updatedAt: string;
           achievements: UnlockedAchievement[];
         }
@@ -202,7 +211,8 @@ export class WebDavBackup {
     password: string,
     objectId: string,
     shop: GameShop,
-    achievements: UnlockedAchievement[]
+    achievements: UnlockedAchievement[],
+    playTimeInMilliseconds: number
   ) {
     const currentManifest = await this.readSyncManifest(
       host,
@@ -219,6 +229,7 @@ export class WebDavBackup {
         [manifestGameKey]: {
           shop,
           objectId,
+          playTimeInMilliseconds,
           updatedAt: new Date().toISOString(),
           achievements,
         },
@@ -1207,7 +1218,8 @@ export class WebDavBackup {
   public static async syncAchievements(
     objectId: string,
     shop: GameShop,
-    achievements: UnlockedAchievement[]
+    achievements: UnlockedAchievement[],
+    playTimeInMilliseconds?: number
   ) {
     const preferences = await db
       .get<string, UserPreferences>(levelKeys.userPreferences, {
@@ -1228,6 +1240,15 @@ export class WebDavBackup {
       webDavPassword!
     );
 
+    const gamePlaytime =
+      typeof playTimeInMilliseconds === "number"
+        ? playTimeInMilliseconds
+        : ((
+            await gamesSublevel
+              .get(levelKeys.game(shop, objectId))
+              .catch(() => null)
+          )?.playTimeInMilliseconds ?? 0);
+
     await WebDavBackup.upsertAchievementsOnSyncManifest(
       webDavHost!,
       location,
@@ -1235,9 +1256,56 @@ export class WebDavBackup {
       webDavPassword!,
       objectId,
       shop,
-      achievements
+      achievements,
+      gamePlaytime
     ).catch((err) => {
       logger.warn("Failed to sync achievements to WebDAV manifest", err);
     });
+  }
+
+  private static async syncGameAchievementsWithPlaytime(game: Game) {
+    const gameKey = levelKeys.game(game.shop, game.objectId);
+    const localGameAchievement = await gameAchievementsSublevel
+      .get(gameKey)
+      .catch(() => null);
+
+    const unlockedAchievements =
+      localGameAchievement?.unlockedAchievements ?? [];
+
+    if (unlockedAchievements.length === 0) return;
+
+    await WebDavBackup.syncAchievements(
+      game.objectId,
+      game.shop,
+      unlockedAchievements,
+      game.playTimeInMilliseconds ?? 0
+    );
+  }
+
+  public static async syncAllExistingAchievementsWithPlaytime() {
+    const preferences = await db
+      .get<string, UserPreferences>(levelKeys.userPreferences, {
+        valueEncoding: "json",
+      })
+      .catch(() => null);
+
+    if (!WebDavBackup.isConfigured(preferences)) return;
+
+    const games = await gamesSublevel.values().all();
+
+    await Promise.all(
+      games.map((game) => {
+        return WebDavBackup.syncGameAchievementsWithPlaytime(game).catch(
+          (err) => {
+            logger.warn(
+              "Failed to sync existing game achievements on startup",
+              game.objectId,
+              game.shop,
+              err
+            );
+          }
+        );
+      })
+    );
   }
 }

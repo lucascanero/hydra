@@ -20,6 +20,7 @@ import {
   DeckyPlugin,
   DownloadSourcesChecker,
   WSClient,
+  WebDavBackup,
   logger,
 } from "@main/services";
 import { migrateDownloadSources } from "./helpers/migrate-download-sources";
@@ -63,6 +64,7 @@ export const loadState = async () => {
 
   await HydraApi.setupApi().then(async () => {
     uploadGamesBatch();
+    void WebDavBackup.syncAllExistingAchievementsWithPlaytime();
     void migrateDownloadSources();
 
     const { syncDownloadSourcesFromApi } = await import("./services/user");
