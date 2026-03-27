@@ -40,11 +40,7 @@ const addWinePrefixToWindowsPath = (
 export class WebDavBackup {
   private static readonly metadataFilename = ".hydra-backups-metadata.json";
   private static readonly backupsPerGameLimitOptions = new Set([
-    5,
-    10,
-    15,
-    20,
-    25,
+    5, 10, 15, 20, 25,
   ]);
 
   private static normalizeRemotePath(remotePath: string) {
@@ -313,14 +309,21 @@ export class WebDavBackup {
     const listedBackups = this.parsePropfindListing(response.data as string);
 
     if (listedBackups.length > 0) {
-      this.writeMetadata(host, gameDir, username, password, listedBackups).catch(
-        (err) => {
-          logger.warn("Failed to seed WebDAV metadata file from PROPFIND listing", {
+      this.writeMetadata(
+        host,
+        gameDir,
+        username,
+        password,
+        listedBackups
+      ).catch((err) => {
+        logger.warn(
+          "Failed to seed WebDAV metadata file from PROPFIND listing",
+          {
             gameDir,
             err,
-          });
-        }
-      );
+          }
+        );
+      });
     }
 
     return listedBackups;
@@ -465,7 +468,13 @@ export class WebDavBackup {
       (backup) => !deletedHrefs.has(this.normalizeRemotePath(backup.href))
     );
 
-    await this.writeMetadata(host, gameDir, username, password, retainedBackups);
+    await this.writeMetadata(
+      host,
+      gameDir,
+      username,
+      password,
+      retainedBackups
+    );
   }
 
   private static restoreBackup(
