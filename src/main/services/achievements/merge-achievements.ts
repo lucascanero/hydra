@@ -15,6 +15,7 @@ import { achievementsLogger } from "../logger";
 import { db, gameAchievementsSublevel, levelKeys } from "@main/level";
 import { getGameAchievementData } from "./get-game-achievement-data";
 import { AchievementWatcherManager } from "./achievement-watcher-manager";
+import { WebDavBackup } from "../webdav-backup";
 
 const isRareAchievement = (points: number) => {
   const rawPercentage = (50 - Math.sqrt(points)) * 2;
@@ -51,6 +52,25 @@ const saveAchievementsOnLocal = async (
         })
         .catch(() => {});
     });
+};
+
+const saveAchievementsOnWebDav = async (
+  objectId: string,
+  shop: GameShop,
+  unlockedAchievements: UnlockedAchievement[]
+) => {
+  return WebDavBackup.syncAchievements(
+    objectId,
+    shop,
+    unlockedAchievements
+  ).catch((err) => {
+    achievementsLogger.warn(
+      "Achievements not synchronized on WebDAV",
+      objectId,
+      shop,
+      err
+    );
+  });
 };
 
 export const mergeAchievements = async (
@@ -184,6 +204,12 @@ export const mergeAchievements = async (
             response.shop,
             response.achievements,
             publishNotification
+          ).then(() =>
+            saveAchievementsOnWebDav(
+              response.objectId,
+              response.shop,
+              response.achievements
+            )
           );
         }
 
@@ -192,6 +218,12 @@ export const mergeAchievements = async (
           game.shop,
           mergedLocalAchievements,
           publishNotification
+        ).then(() =>
+          saveAchievementsOnWebDav(
+            game.objectId,
+            game.shop,
+            mergedLocalAchievements
+          )
         );
       })
       .catch((err) => {
@@ -208,6 +240,12 @@ export const mergeAchievements = async (
           game.shop,
           mergedLocalAchievements,
           publishNotification
+        ).then(() =>
+          saveAchievementsOnWebDav(
+            game.objectId,
+            game.shop,
+            mergedLocalAchievements
+          )
         );
       })
       .finally(() => {
@@ -219,6 +257,11 @@ export const mergeAchievements = async (
       game.shop,
       mergedLocalAchievements,
       publishNotification
+    );
+    await saveAchievementsOnWebDav(
+      game.objectId,
+      game.shop,
+      mergedLocalAchievements
     );
   }
 
