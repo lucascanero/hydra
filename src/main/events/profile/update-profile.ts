@@ -1,5 +1,5 @@
 import { registerEvent } from "../register-event";
-import { HydraApi } from "@main/services";
+import { HydraApi, WebDavBackup } from "@main/services";
 import fs from "node:fs";
 import path from "node:path";
 import type { UpdateProfileRequest, UserProfile } from "@types";
@@ -77,7 +77,11 @@ const updateProfile = async (
     }
   }
 
-  return patchUserProfile(payload);
+  const profile = await patchUserProfile(payload);
+
+  await WebDavBackup.syncProfile(profile);
+
+  return profile;
 };
 
 registerEvent("updateProfile", updateProfile);

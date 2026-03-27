@@ -4,12 +4,21 @@ import path from "node:path";
 import os from "node:os";
 import * as tar from "tar";
 import type {
+  Game,
   GameShop,
   LudusaviBackupMapping,
+  UnlockedAchievement,
+  UserDetails,
+  UserProfile,
   UserPreferences,
   WebDavBackupEntry,
 } from "@types";
-import { db, gamesSublevel, levelKeys } from "@main/level";
+import {
+  db,
+  gameAchievementsSublevel,
+  gamesSublevel,
+  levelKeys,
+} from "@main/level";
 import { logger } from "./logger";
 import { WindowManager } from "./window-manager";
 import { CloudSync } from "./cloud-sync";
@@ -39,6 +48,215 @@ const addWinePrefixToWindowsPath = (
 
 export class WebDavBackup {
   private static readonly metadataFilename = ".hydra-backups-metadata.json";
+  private static readonly syncManifestFilename = ".hydra-sync-manifest.json";
+  private static readonly epochIsoString = new Date(0).toISOString();
+  private static readonly startupSyncBatchSize = 3;
+  private static syncManifestWriteQueue: Promise<void> = Promise.resolve();
+
+  private static enqueueSyncManifestWrite<T>(operation: () => Promise<T>) {
+    const nextOperation = this.syncManifestWriteQueue
+      .catch((err) => {
+        logger.warn("Previous WebDAV sync manifest operation failed", err);
+      })
+      .then(() => operation());
+
+    this.syncManifestWriteQueue = nextOperation
+      .then(() => undefined)
+      .catch(() => undefined);
+
+    return nextOperation;
+  }
+
+  private static sanitizeProfileForManifest(
+    profile: UserDetails | UserProfile
+  ) {
+    if ("workwondersJwt" in profile) {
+      const { workwondersJwt: _, ...safeProfile } = profile;
+      return safeProfile;
+    }
+
+    return profile;
+  }
+
+  private static getSyncManifestPath(location: string) {
+    return this.normalizeRemotePath(`${location}/${this.syncManifestFilename}`);
+  }
+
+  private static async readSyncManifest(
+    host: string,
+    location: string,
+    username: string,
+    password: string
+  ): Promise<{
+    version: number;
+    updatedAt: string;
+    profile?: Partial<UserDetails> | UserProfile;
+    achievements?: Record<
+      string,
+      {
+        shop: GameShop;
+        objectId: string;
+        playTimeInMilliseconds: number;
+        updatedAt: string;
+        achievements: UnlockedAchievement[];
+      }
+    >;
+  }> {
+    const manifestPath = this.getSyncManifestPath(location);
+    const manifestUrl = this.buildUrl(host, manifestPath);
+
+    const response = await axios
+      .get(manifestUrl, {
+        auth: { username, password },
+        responseType: "text",
+        validateStatus: (status) =>
+          (status >= 200 && status < 300) || status === 404,
+      })
+      .catch((err) => {
+        logger.warn("Failed to read WebDAV sync manifest", {
+          manifestUrl,
+          err,
+        });
+        return null;
+      });
+
+    if (!response || response.status === 404) {
+      return {
+        version: 1,
+        updatedAt: this.epochIsoString,
+      };
+    }
+
+    try {
+      const parsedManifest = JSON.parse(String(response.data)) as {
+        version?: number;
+        updatedAt?: string;
+        profile?: Partial<UserDetails> | UserProfile;
+        achievements?: Record<
+          string,
+          {
+            shop: GameShop;
+            objectId: string;
+            playTimeInMilliseconds: number;
+            updatedAt: string;
+            achievements: UnlockedAchievement[];
+          }
+        >;
+      };
+
+      return {
+        version:
+          typeof parsedManifest.version === "number"
+            ? parsedManifest.version
+            : 1,
+        updatedAt:
+          typeof parsedManifest.updatedAt === "string"
+            ? parsedManifest.updatedAt
+            : this.epochIsoString,
+        profile: parsedManifest.profile,
+        achievements:
+          parsedManifest.achievements &&
+          typeof parsedManifest.achievements === "object"
+            ? parsedManifest.achievements
+            : {},
+      };
+    } catch (err) {
+      logger.warn("Failed to parse WebDAV sync manifest", { manifestUrl, err });
+      return {
+        version: 1,
+        updatedAt: this.epochIsoString,
+      };
+    }
+  }
+
+  private static async writeSyncManifest(
+    host: string,
+    location: string,
+    username: string,
+    password: string,
+    manifest: {
+      version: number;
+      updatedAt: string;
+      profile?: Partial<UserDetails> | UserProfile;
+      achievements?: Record<
+        string,
+        {
+          shop: GameShop;
+          objectId: string;
+          playTimeInMilliseconds: number;
+          updatedAt: string;
+          achievements: UnlockedAchievement[];
+        }
+      >;
+    }
+  ) {
+    const manifestPath = this.getSyncManifestPath(location);
+    const manifestUrl = this.buildUrl(host, manifestPath);
+
+    await axios.put(manifestUrl, JSON.stringify(manifest, null, 2), {
+      auth: { username, password },
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  private static async upsertProfileOnSyncManifest(
+    host: string,
+    location: string,
+    username: string,
+    password: string,
+    profile: UserDetails | UserProfile
+  ) {
+    await this.enqueueSyncManifestWrite(async () => {
+      const currentManifest = await this.readSyncManifest(
+        host,
+        location,
+        username,
+        password
+      );
+
+      await this.writeSyncManifest(host, location, username, password, {
+        ...currentManifest,
+        profile: this.sanitizeProfileForManifest(profile),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+  }
+
+  private static async upsertAchievementsOnSyncManifest(
+    host: string,
+    location: string,
+    username: string,
+    password: string,
+    objectId: string,
+    shop: GameShop,
+    achievements: UnlockedAchievement[],
+    playTimeInMilliseconds: number
+  ) {
+    await this.enqueueSyncManifestWrite(async () => {
+      const currentManifest = await this.readSyncManifest(
+        host,
+        location,
+        username,
+        password
+      );
+      const manifestGameKey = levelKeys.game(shop, objectId);
+
+      await this.writeSyncManifest(host, location, username, password, {
+        ...currentManifest,
+        achievements: {
+          ...(currentManifest.achievements ?? {}),
+          [manifestGameKey]: {
+            shop,
+            objectId,
+            playTimeInMilliseconds,
+            updatedAt: new Date().toISOString(),
+            achievements,
+          },
+        },
+        updatedAt: new Date().toISOString(),
+      });
+    });
+  }
   private static readonly backupsPerGameLimitOptions = new Set([
     5, 10, 15, 20, 25,
   ]);
@@ -983,6 +1201,145 @@ export class WebDavBackup {
           err,
         });
       }
+    }
+  }
+
+  public static async syncProfile(profile: UserDetails | UserProfile) {
+    const preferences = await db
+      .get<string, UserPreferences>(levelKeys.userPreferences, {
+        valueEncoding: "json",
+      })
+      .catch(() => null);
+
+    if (!WebDavBackup.isConfigured(preferences)) return;
+
+    const { webDavHost, webDavUsername, webDavPassword, webDavLocation } =
+      preferences!;
+    const location = (webDavLocation ?? "/hydra-backups").replace(/\/$/, "");
+
+    await WebDavBackup.ensureDirectory(
+      webDavHost!,
+      location,
+      webDavUsername!,
+      webDavPassword!
+    );
+
+    await WebDavBackup.upsertProfileOnSyncManifest(
+      webDavHost!,
+      location,
+      webDavUsername!,
+      webDavPassword!,
+      profile
+    ).catch((err) => {
+      logger.warn("Failed to sync profile info to WebDAV manifest", err);
+    });
+  }
+
+  public static async syncAchievements(
+    objectId: string,
+    shop: GameShop,
+    achievements: UnlockedAchievement[],
+    playTimeInMilliseconds?: number
+  ) {
+    const preferences = await db
+      .get<string, UserPreferences>(levelKeys.userPreferences, {
+        valueEncoding: "json",
+      })
+      .catch(() => null);
+
+    if (!WebDavBackup.isConfigured(preferences)) return;
+
+    const { webDavHost, webDavUsername, webDavPassword, webDavLocation } =
+      preferences!;
+    const location = (webDavLocation ?? "/hydra-backups").replace(/\/$/, "");
+
+    await WebDavBackup.ensureDirectory(
+      webDavHost!,
+      location,
+      webDavUsername!,
+      webDavPassword!
+    );
+
+    let gamePlaytime = playTimeInMilliseconds;
+
+    if (typeof gamePlaytime !== "number") {
+      const game = await gamesSublevel
+        .get(levelKeys.game(shop, objectId))
+        .catch(() => null);
+      gamePlaytime = game?.playTimeInMilliseconds ?? 0;
+    }
+
+    await WebDavBackup.upsertAchievementsOnSyncManifest(
+      webDavHost!,
+      location,
+      webDavUsername!,
+      webDavPassword!,
+      objectId,
+      shop,
+      achievements,
+      gamePlaytime
+    ).catch((err) => {
+      logger.warn("Failed to sync achievements to WebDAV manifest", err);
+    });
+  }
+
+  private static async syncGameAchievementsWithPlaytime(game: Game) {
+    const gameKey = levelKeys.game(game.shop, game.objectId);
+    const localGameAchievement = await gameAchievementsSublevel
+      .get(gameKey)
+      .catch(() => null);
+
+    const unlockedAchievements =
+      localGameAchievement?.unlockedAchievements ?? [];
+
+    if (unlockedAchievements.length === 0) return;
+
+    await WebDavBackup.syncAchievements(
+      game.objectId,
+      game.shop,
+      unlockedAchievements,
+      game.playTimeInMilliseconds ?? 0
+    );
+  }
+
+  public static async syncAllExistingAchievementsWithPlaytime() {
+    const preferences = await db
+      .get<string, UserPreferences>(levelKeys.userPreferences, {
+        valueEncoding: "json",
+      })
+      .catch(() => null);
+
+    if (!WebDavBackup.isConfigured(preferences)) return;
+
+    const games = await gamesSublevel.values().all();
+
+    for (
+      let batchStartIndex = 0;
+      batchStartIndex < games.length;
+      batchStartIndex += this.startupSyncBatchSize
+    ) {
+      const gameBatch = games.slice(
+        batchStartIndex,
+        batchStartIndex + this.startupSyncBatchSize
+      );
+
+      await Promise.all(
+        gameBatch.map((game) => {
+          return WebDavBackup.syncGameAchievementsWithPlaytime(game).catch(
+            (err) => {
+              logger.warn(
+                "Failed to sync existing game achievements on startup",
+                {
+                  objectId: game.objectId,
+                  shop: game.shop,
+                  title: game.title,
+                  err,
+                }
+              );
+            }
+          );
+        })
+      );
     }
   }
 }

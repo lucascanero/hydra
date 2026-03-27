@@ -15,6 +15,7 @@ import { achievementsLogger } from "../logger";
 import { db, gameAchievementsSublevel, levelKeys } from "@main/level";
 import { getGameAchievementData } from "./get-game-achievement-data";
 import { AchievementWatcherManager } from "./achievement-watcher-manager";
+import { WebDavBackup } from "../webdav-backup";
 
 const isRareAchievement = (points: number) => {
   const rawPercentage = (50 - Math.sqrt(points)) * 2;
@@ -184,6 +185,12 @@ export const mergeAchievements = async (
             response.shop,
             response.achievements,
             publishNotification
+          ).then(() =>
+            WebDavBackup.syncAchievements(
+              response.objectId,
+              response.shop,
+              response.achievements
+            )
           );
         }
 
@@ -192,6 +199,12 @@ export const mergeAchievements = async (
           game.shop,
           mergedLocalAchievements,
           publishNotification
+        ).then(() =>
+          WebDavBackup.syncAchievements(
+            game.objectId,
+            game.shop,
+            mergedLocalAchievements
+          )
         );
       })
       .catch((err) => {
@@ -208,6 +221,12 @@ export const mergeAchievements = async (
           game.shop,
           mergedLocalAchievements,
           publishNotification
+        ).then(() =>
+          WebDavBackup.syncAchievements(
+            game.objectId,
+            game.shop,
+            mergedLocalAchievements
+          )
         );
       })
       .finally(() => {
@@ -219,6 +238,11 @@ export const mergeAchievements = async (
       game.shop,
       mergedLocalAchievements,
       publishNotification
+    );
+    await WebDavBackup.syncAchievements(
+      game.objectId,
+      game.shop,
+      mergedLocalAchievements
     );
   }
 

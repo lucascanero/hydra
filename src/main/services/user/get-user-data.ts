@@ -2,12 +2,15 @@ import { User, type ProfileVisibility, type UserDetails } from "@types";
 import { HydraApi } from "../hydra-api";
 import { UserNotLoggedInError } from "@shared";
 import { logger } from "../logger";
+import { WebDavBackup } from "../webdav-backup";
 import { db } from "@main/level";
 import { levelKeys } from "@main/level/sublevels";
 
 export const getUserData = async () => {
   return HydraApi.get<UserDetails>(`/profile/me`)
     .then(async (me) => {
+      await WebDavBackup.syncProfile(me);
+
       try {
         const user = await db.get<string, User>(levelKeys.user, {
           valueEncoding: "json",
