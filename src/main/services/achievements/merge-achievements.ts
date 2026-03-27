@@ -54,25 +54,6 @@ const saveAchievementsOnLocal = async (
     });
 };
 
-const saveAchievementsOnWebDav = async (
-  objectId: string,
-  shop: GameShop,
-  unlockedAchievements: UnlockedAchievement[]
-) => {
-  return WebDavBackup.syncAchievements(
-    objectId,
-    shop,
-    unlockedAchievements
-  ).catch((err) => {
-    achievementsLogger.warn(
-      "Achievements not synchronized on WebDAV",
-      objectId,
-      shop,
-      err
-    );
-  });
-};
-
 export const mergeAchievements = async (
   game: Game,
   achievements: UnlockedAchievement[],
@@ -205,7 +186,7 @@ export const mergeAchievements = async (
             response.achievements,
             publishNotification
           ).then(() =>
-            saveAchievementsOnWebDav(
+            WebDavBackup.syncAchievements(
               response.objectId,
               response.shop,
               response.achievements
@@ -219,7 +200,7 @@ export const mergeAchievements = async (
           mergedLocalAchievements,
           publishNotification
         ).then(() =>
-          saveAchievementsOnWebDav(
+          WebDavBackup.syncAchievements(
             game.objectId,
             game.shop,
             mergedLocalAchievements
@@ -241,7 +222,7 @@ export const mergeAchievements = async (
           mergedLocalAchievements,
           publishNotification
         ).then(() =>
-          saveAchievementsOnWebDav(
+          WebDavBackup.syncAchievements(
             game.objectId,
             game.shop,
             mergedLocalAchievements
@@ -258,7 +239,7 @@ export const mergeAchievements = async (
       mergedLocalAchievements,
       publishNotification
     );
-    await saveAchievementsOnWebDav(
+    await WebDavBackup.syncAchievements(
       game.objectId,
       game.shop,
       mergedLocalAchievements

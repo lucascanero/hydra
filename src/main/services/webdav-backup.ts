@@ -43,6 +43,7 @@ const addWinePrefixToWindowsPath = (
 export class WebDavBackup {
   private static readonly metadataFilename = ".hydra-backups-metadata.json";
   private static readonly syncManifestFilename = ".hydra-sync-manifest.json";
+  private static readonly epochIsoString = new Date(0).toISOString();
 
   private static sanitizeProfileForManifest(
     profile: UserDetails | UserProfile
@@ -99,7 +100,7 @@ export class WebDavBackup {
     if (!response || response.status === 404) {
       return {
         version: 1,
-        updatedAt: new Date(0).toISOString(),
+        updatedAt: this.epochIsoString,
       };
     }
 
@@ -127,7 +128,7 @@ export class WebDavBackup {
         updatedAt:
           typeof parsedManifest.updatedAt === "string"
             ? parsedManifest.updatedAt
-            : new Date(0).toISOString(),
+            : this.epochIsoString,
         profile: parsedManifest.profile,
         achievements:
           parsedManifest.achievements &&
@@ -139,7 +140,7 @@ export class WebDavBackup {
       logger.warn("Failed to parse WebDAV sync manifest", { manifestUrl, err });
       return {
         version: 1,
-        updatedAt: new Date(0).toISOString(),
+        updatedAt: this.epochIsoString,
       };
     }
   }
@@ -209,13 +210,13 @@ export class WebDavBackup {
       username,
       password
     );
-    const gameKey = levelKeys.game(shop, objectId);
+    const manifestGameKey = levelKeys.game(shop, objectId);
 
     await this.writeSyncManifest(host, location, username, password, {
       ...currentManifest,
       achievements: {
         ...(currentManifest.achievements ?? {}),
-        [gameKey]: {
+        [manifestGameKey]: {
           shop,
           objectId,
           updatedAt: new Date().toISOString(),
