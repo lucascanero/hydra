@@ -813,6 +813,8 @@
     "webdav_password": "Password",
     "webdav_location": "Backup path",
     "webdav_location_hint": "The remote path on your WebDAV server where backups will be stored. Defaults to /hydra-backups.",
+    "webdav_backups_per_game_limit": "Backups per game",
+    "webdav_backups_per_game_limit_unlimited": "Unlimited",
     "webdav_test_connection": "Test connection",
     "webdav_testing": "Testing…",
     "webdav_connection_success": "WebDAV connection successful",

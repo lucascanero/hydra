@@ -150,6 +150,7 @@ export interface UserPreferences {
   webDavUsername?: string | null;
   webDavPassword?: string | null;
   webDavLocation?: string | null;
+  webDavBackupsPerGameLimit?: number | null;
 }
 
 export interface ScreenState {

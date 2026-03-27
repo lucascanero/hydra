@@ -225,6 +225,9 @@ export class WebDavBackup {
       updatedAt: new Date().toISOString(),
     });
   }
+  private static readonly backupsPerGameLimitOptions = new Set([
+    5, 10, 15, 20, 25,
+  ]);
 
   private static normalizeRemotePath(remotePath: string) {
     const normalized = remotePath.trim();
@@ -401,6 +404,20 @@ export class WebDavBackup {
     });
   }
 
+  private static resolveBackupsPerGameLimit(preferences: UserPreferences) {
+    const preferenceValue = preferences.webDavBackupsPerGameLimit;
+
+    if (
+      typeof preferenceValue !== "number" ||
+      !Number.isInteger(preferenceValue) ||
+      !this.backupsPerGameLimitOptions.has(preferenceValue)
+    ) {
+      return null;
+    }
+
+    return preferenceValue;
+  }
+
   private static async readMetadata(
     host: string,
     gameDir: string,
@@ -441,6 +458,61 @@ export class WebDavBackup {
       logger.warn("Failed to parse WebDAV metadata file", { metadataUrl, err });
       return null;
     }
+  }
+
+  private static async listBackupsFromRemoteDirectory(
+    host: string,
+    gameDir: string,
+    username: string,
+    password: string
+  ): Promise<WebDavBackupEntry[]> {
+    const metadataBackups = await this.readMetadata(
+      host,
+      gameDir,
+      username,
+      password
+    );
+
+    if (metadataBackups) {
+      return metadataBackups;
+    }
+
+    const url = this.buildUrl(host, gameDir);
+
+    const response = await axios.request({
+      method: "PROPFIND",
+      url,
+      auth: { username, password },
+      headers: { Depth: "1", "Content-Type": "application/xml" },
+      validateStatus: (status) =>
+        (status >= 200 && status < 300) || status === 207 || status === 404,
+    });
+
+    if (response.status === 404) {
+      return [];
+    }
+
+    const listedBackups = this.parsePropfindListing(response.data as string);
+
+    if (listedBackups.length > 0) {
+      this.writeMetadata(
+        host,
+        gameDir,
+        username,
+        password,
+        listedBackups
+      ).catch((err) => {
+        logger.warn(
+          "Failed to seed WebDAV metadata file from PROPFIND listing",
+          {
+            gameDir,
+            err,
+          }
+        );
+      });
+    }
+
+    return listedBackups;
   }
 
   private static async writeMetadata(
@@ -519,6 +591,76 @@ export class WebDavBackup {
     if (filtered.length === currentEntries.length) return;
 
     await this.writeMetadata(host, gameDir, username, password, filtered);
+  }
+
+  private static async enforceBackupsPerGameLimit(
+    host: string,
+    gameDir: string,
+    username: string,
+    password: string,
+    backupsPerGameLimit: number
+  ) {
+    const backups = await this.listBackupsFromRemoteDirectory(
+      host,
+      gameDir,
+      username,
+      password
+    );
+
+    if (backups.length <= backupsPerGameLimit) {
+      return;
+    }
+
+    const backupsToDelete = backups.slice(backupsPerGameLimit);
+    const deletedHrefs = new Set<string>();
+
+    for (const backup of backupsToDelete) {
+      const hrefCandidates = this.getDeleteHrefCandidates(backup.href);
+      let deleted = false;
+
+      for (const hrefCandidate of hrefCandidates) {
+        const deleteUrl = this.buildUrl(host, hrefCandidate);
+
+        const response = await axios.request({
+          method: "DELETE",
+          url: deleteUrl,
+          auth: { username, password },
+          validateStatus: (status) =>
+            (status >= 200 && status < 300) || status === 404,
+        });
+
+        if (response.status >= 200 && response.status < 300) {
+          deleted = true;
+          break;
+        }
+      }
+
+      if (!deleted) {
+        logger.warn("Failed to enforce WebDAV backups-per-game limit", {
+          backupHref: backup.href,
+          gameDir,
+        });
+        continue;
+      }
+
+      deletedHrefs.add(this.normalizeRemotePath(backup.href));
+    }
+
+    if (deletedHrefs.size === 0) {
+      return;
+    }
+
+    const retainedBackups = backups.filter(
+      (backup) => !deletedHrefs.has(this.normalizeRemotePath(backup.href))
+    );
+
+    await this.writeMetadata(
+      host,
+      gameDir,
+      username,
+      password,
+      retainedBackups
+    );
   }
 
   private static restoreBackup(
@@ -621,53 +763,12 @@ export class WebDavBackup {
 
     const location = (webDavLocation ?? "/hydra-backups").replace(/\/$/, "");
     const gameDir = `${location}/${shop}-${objectId}`;
-    const metadataBackups = await WebDavBackup.readMetadata(
+    return WebDavBackup.listBackupsFromRemoteDirectory(
       webDavHost!,
       gameDir,
       webDavUsername!,
       webDavPassword!
     );
-
-    if (metadataBackups) {
-      return metadataBackups;
-    }
-
-    const url = WebDavBackup.buildUrl(webDavHost!, gameDir);
-
-    const response = await axios.request({
-      method: "PROPFIND",
-      url,
-      auth: { username: webDavUsername!, password: webDavPassword! },
-      headers: { Depth: "1", "Content-Type": "application/xml" },
-      validateStatus: (status) =>
-        (status >= 200 && status < 300) || status === 207 || status === 404,
-    });
-
-    if (response.status === 404) return [];
-
-    const listedBackups = WebDavBackup.parsePropfindListing(
-      response.data as string
-    );
-
-    if (listedBackups.length > 0) {
-      WebDavBackup.writeMetadata(
-        webDavHost!,
-        gameDir,
-        webDavUsername!,
-        webDavPassword!,
-        listedBackups
-      ).catch((err) => {
-        logger.warn(
-          "Failed to seed WebDAV metadata file from PROPFIND listing",
-          {
-            gameDir,
-            err,
-          }
-        );
-      });
-    }
-
-    return listedBackups;
   }
 
   public static async downloadAndRestoreBackup(
@@ -955,11 +1056,20 @@ export class WebDavBackup {
       throw new Error("WebDAV not configured");
     }
 
-    const { webDavHost, webDavUsername, webDavPassword, webDavLocation } =
-      preferences!;
+    const {
+      webDavHost,
+      webDavUsername,
+      webDavPassword,
+      webDavLocation,
+      webDavBackupsPerGameLimit,
+    } = preferences!;
 
     const location = (webDavLocation ?? "/hydra-backups").replace(/\/$/, "");
     const gameDir = `${location}/${shop}-${objectId}`;
+    const backupsPerGameLimit = WebDavBackup.resolveBackupsPerGameLimit({
+      ...preferences!,
+      webDavBackupsPerGameLimit,
+    });
 
     const game = await gamesSublevel.get(levelKeys.game(shop, objectId));
     const effectiveWinePrefixPath = Wine.getEffectivePrefixPath(
@@ -1025,6 +1135,22 @@ export class WebDavBackup {
           err,
         });
       });
+
+      if (backupsPerGameLimit !== null) {
+        await WebDavBackup.enforceBackupsPerGameLimit(
+          webDavHost!,
+          gameDir,
+          webDavUsername!,
+          webDavPassword!,
+          backupsPerGameLimit
+        ).catch((err) => {
+          logger.warn("Failed to enforce WebDAV backup retention policy", {
+            gameDir,
+            backupsPerGameLimit,
+            err,
+          });
+        });
+      }
 
       WindowManager.mainWindow?.webContents.send(
         `on-upload-complete-${objectId}-${shop}`,
