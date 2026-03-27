@@ -50,6 +50,22 @@ export class WebDavBackup {
   private static readonly metadataFilename = ".hydra-backups-metadata.json";
   private static readonly syncManifestFilename = ".hydra-sync-manifest.json";
   private static readonly epochIsoString = new Date(0).toISOString();
+  private static readonly startupSyncBatchSize = 3;
+  private static syncManifestWriteQueue: Promise<void> = Promise.resolve();
+
+  private static enqueueSyncManifestWrite<T>(operation: () => Promise<T>) {
+    const nextOperation = this.syncManifestWriteQueue
+      .catch((err) => {
+        logger.warn("Previous WebDAV sync manifest operation failed", err);
+      })
+      .then(() => operation());
+
+    this.syncManifestWriteQueue = nextOperation
+      .then(() => undefined)
+      .catch(() => undefined);
+
+    return nextOperation;
+  }
 
   private static sanitizeProfileForManifest(
     profile: UserDetails | UserProfile
@@ -190,17 +206,19 @@ export class WebDavBackup {
     password: string,
     profile: UserDetails | UserProfile
   ) {
-    const currentManifest = await this.readSyncManifest(
-      host,
-      location,
-      username,
-      password
-    );
+    await this.enqueueSyncManifestWrite(async () => {
+      const currentManifest = await this.readSyncManifest(
+        host,
+        location,
+        username,
+        password
+      );
 
-    await this.writeSyncManifest(host, location, username, password, {
-      ...currentManifest,
-      profile: this.sanitizeProfileForManifest(profile),
-      updatedAt: new Date().toISOString(),
+      await this.writeSyncManifest(host, location, username, password, {
+        ...currentManifest,
+        profile: this.sanitizeProfileForManifest(profile),
+        updatedAt: new Date().toISOString(),
+      });
     });
   }
 
@@ -214,27 +232,29 @@ export class WebDavBackup {
     achievements: UnlockedAchievement[],
     playTimeInMilliseconds: number
   ) {
-    const currentManifest = await this.readSyncManifest(
-      host,
-      location,
-      username,
-      password
-    );
-    const manifestGameKey = levelKeys.game(shop, objectId);
+    await this.enqueueSyncManifestWrite(async () => {
+      const currentManifest = await this.readSyncManifest(
+        host,
+        location,
+        username,
+        password
+      );
+      const manifestGameKey = levelKeys.game(shop, objectId);
 
-    await this.writeSyncManifest(host, location, username, password, {
-      ...currentManifest,
-      achievements: {
-        ...(currentManifest.achievements ?? {}),
-        [manifestGameKey]: {
-          shop,
-          objectId,
-          playTimeInMilliseconds,
-          updatedAt: new Date().toISOString(),
-          achievements,
+      await this.writeSyncManifest(host, location, username, password, {
+        ...currentManifest,
+        achievements: {
+          ...(currentManifest.achievements ?? {}),
+          [manifestGameKey]: {
+            shop,
+            objectId,
+            playTimeInMilliseconds,
+            updatedAt: new Date().toISOString(),
+            achievements,
+          },
         },
-      },
-      updatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
     });
   }
   private static readonly backupsPerGameLimitOptions = new Set([
@@ -1240,14 +1260,14 @@ export class WebDavBackup {
       webDavPassword!
     );
 
-    const gamePlaytime =
-      typeof playTimeInMilliseconds === "number"
-        ? playTimeInMilliseconds
-        : ((
-            await gamesSublevel
-              .get(levelKeys.game(shop, objectId))
-              .catch(() => null)
-          )?.playTimeInMilliseconds ?? 0);
+    let gamePlaytime = playTimeInMilliseconds;
+
+    if (typeof gamePlaytime !== "number") {
+      const game = await gamesSublevel
+        .get(levelKeys.game(shop, objectId))
+        .catch(() => null);
+      gamePlaytime = game?.playTimeInMilliseconds ?? 0;
+    }
 
     await WebDavBackup.upsertAchievementsOnSyncManifest(
       webDavHost!,
@@ -1293,19 +1313,33 @@ export class WebDavBackup {
 
     const games = await gamesSublevel.values().all();
 
-    await Promise.all(
-      games.map((game) => {
-        return WebDavBackup.syncGameAchievementsWithPlaytime(game).catch(
-          (err) => {
-            logger.warn(
-              "Failed to sync existing game achievements on startup",
-              game.objectId,
-              game.shop,
-              err
-            );
-          }
-        );
-      })
-    );
+    for (
+      let batchStartIndex = 0;
+      batchStartIndex < games.length;
+      batchStartIndex += this.startupSyncBatchSize
+    ) {
+      const gameBatch = games.slice(
+        batchStartIndex,
+        batchStartIndex + this.startupSyncBatchSize
+      );
+
+      await Promise.all(
+        gameBatch.map((game) => {
+          return WebDavBackup.syncGameAchievementsWithPlaytime(game).catch(
+            (err) => {
+              logger.warn(
+                "Failed to sync existing game achievements on startup",
+                {
+                  objectId: game.objectId,
+                  shop: game.shop,
+                  title: game.title,
+                  err,
+                }
+              );
+            }
+          );
+        })
+      );
+    }
   }
 }
