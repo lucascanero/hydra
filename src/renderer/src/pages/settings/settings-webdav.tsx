@@ -1,9 +1,46 @@
 import { useContext, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, CheckboxField, TextField } from "@renderer/components";
+import {
+  Button,
+  CheckboxField,
+  SelectField,
+  TextField,
+} from "@renderer/components";
 import "./settings-webdav.scss";
 import { useAppSelector, useToast } from "@renderer/hooks";
 import { settingsContext } from "@renderer/context";
+
+const WEB_DAV_BACKUP_LIMIT_OPTIONS = [5, 10, 15, 20, 25] as const;
+
+const isValidWebDavBackupLimit = (
+  value: number
+): value is (typeof WEB_DAV_BACKUP_LIMIT_OPTIONS)[number] => {
+  return WEB_DAV_BACKUP_LIMIT_OPTIONS.includes(
+    value as (typeof WEB_DAV_BACKUP_LIMIT_OPTIONS)[number]
+  );
+};
+
+const normalizeWebDavBackupLimit = (value?: number | null) => {
+  if (typeof value !== "number") {
+    return "unlimited";
+  }
+
+  return isValidWebDavBackupLimit(value) ? String(value) : "unlimited";
+};
+
+const parseWebDavBackupLimit = (value: string): number | null => {
+  if (value === "unlimited") {
+    return null;
+  }
+
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue) || !isValidWebDavBackupLimit(parsedValue)) {
+    return null;
+  }
+
+  return parsedValue;
+};
 
 export function SettingsWebDav() {
   const userPreferences = useAppSelector(
@@ -20,6 +57,7 @@ export function SettingsWebDav() {
     webDavUsername: "",
     webDavPassword: "",
     webDavLocation: "",
+    webDavBackupsPerGameLimit: "unlimited",
   });
 
   const { showSuccessToast, showErrorToast } = useToast();
@@ -33,6 +71,9 @@ export function SettingsWebDav() {
         webDavUsername: userPreferences.webDavUsername ?? "",
         webDavPassword: userPreferences.webDavPassword ?? "",
         webDavLocation: userPreferences.webDavLocation ?? "",
+        webDavBackupsPerGameLimit: normalizeWebDavBackupLimit(
+          userPreferences.webDavBackupsPerGameLimit
+        ),
       });
     }
   }, [userPreferences]);
@@ -64,6 +105,9 @@ export function SettingsWebDav() {
         webDavUsername: form.webDavUsername || null,
         webDavPassword: form.webDavPassword || null,
         webDavLocation: form.webDavLocation || null,
+        webDavBackupsPerGameLimit: parseWebDavBackupLimit(
+          form.webDavBackupsPerGameLimit
+        ),
       });
 
       showSuccessToast(t("changes_saved"));
@@ -144,6 +188,29 @@ export function SettingsWebDav() {
               setForm({ ...form, webDavLocation: event.target.value })
             }
             hint={t("webdav_location_hint")}
+          />
+
+          <SelectField
+            label={t("webdav_backups_per_game_limit")}
+            value={form.webDavBackupsPerGameLimit}
+            options={[
+              ...WEB_DAV_BACKUP_LIMIT_OPTIONS.map((limit) => ({
+                key: String(limit),
+                value: String(limit),
+                label: String(limit),
+              })),
+              {
+                key: "unlimited",
+                value: "unlimited",
+                label: t("webdav_backups_per_game_limit_unlimited"),
+              },
+            ]}
+            onChange={(event) =>
+              setForm({
+                ...form,
+                webDavBackupsPerGameLimit: event.target.value,
+              })
+            }
           />
 
           <div className="settings-webdav__actions">

@@ -333,6 +333,12 @@ export function CloudSyncPanel({
 
   const hasReachedLimit =
     backupsPerGameLimit > 0 && artifacts.length >= backupsPerGameLimit;
+  const hasReachedWebDavLimit = Boolean(
+    isWebDavConfigured &&
+      userPreferences?.webDavBackupsPerGameLimit &&
+      userPreferences.webDavBackupsPerGameLimit > 0 &&
+      webDavBackups.length >= userPreferences.webDavBackupsPerGameLimit
+  );
 
   const hydraByLabel = useMemo(() => {
     const map = new Map<string, GameArtifact>();
@@ -451,7 +457,7 @@ export function CloudSyncPanel({
         </span>
       );
     }
-    if (hasReachedLimit) {
+    if (hasReachedLimit || hasReachedWebDavLimit) {
       return t("max_number_of_artifacts_reached");
     }
     if (mergedBackupRows.length === 0) {
@@ -465,6 +471,7 @@ export function CloudSyncPanel({
     backupDownloadProgress?.progress,
     backupPreview,
     hasReachedLimit,
+    hasReachedWebDavLimit,
     loadingWebDavBackups,
     loadingPreview,
     mergedBackupRows.length,
@@ -569,7 +576,8 @@ export function CloudSyncPanel({
           disabled={
             disableActions ||
             !backupPreview?.overall.totalGames ||
-            (hasReachedLimit && !isWebDavConfigured)
+            (hasReachedLimit && !isWebDavConfigured) ||
+            hasReachedWebDavLimit
           }
         >
           {uploadingBackup || uploadingWebDavBackup ? (
